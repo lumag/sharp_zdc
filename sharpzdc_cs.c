@@ -20,7 +20,7 @@
 
 #define SZDC_DATA		0x4	/* l */
 
-#define SZDC_DATA_BUS		0x6	/* bw */
+#define SZDC_SET_DATA_BUS	0x6	/* bw */
 
 #define SZDC_MCON		0x8	/* bw */
 #define SZDC_MCON_RO		0x0001 /* at least it seems so */
@@ -336,7 +336,7 @@ static void sharpzdc_start(struct drvWork_s *drvWork) {
 	setw(0x0100, io + SZDC_FLAGS1);
 	clearw(0x4000, io + SZDC_FLAGS1);
 
-	outbw(0, io + SZDC_DATA_BUS);
+	outbw(0, io + SZDC_SET_DATA_BUS);
 
 	udelay(1000);
 
@@ -403,7 +403,7 @@ static void sharpzdc_stop(struct drvWork_s *drvWork) {
 	outbw(0, io + SZDC_FLAGS1);
 	outbw(0, io + SZDC_FLAGS2);
 
-	outbw(0, io + SZDC_DATA_BUS);
+	outbw(0, io + SZDC_SET_DATA_BUS);
 }
 
 static int sharpzdc_capture(struct drvWork_s *drvWork) {
@@ -421,7 +421,7 @@ static int sharpzdc_capture(struct drvWork_s *drvWork) {
 
 	setw(SZDC_FLAGS1_CAPTURING, io + SZDC_FLAGS1);
 
-	outbw(0, io + SZDC_DATA_BUS);
+	outbw(0, io + SZDC_SET_DATA_BUS);
 
 	drvWork->available = 1;
 	return 1;
@@ -541,7 +541,7 @@ static int sharpzdc_get(struct drvWork_s *drvWork, char *buf, size_t size, loff_
 		setw(0x4000, io + SZDC_FLAGS1);
 		clearw(0x4000, io + SZDC_FLAGS2);
 	}
-	outbw(0, io + SZDC_DATA_BUS);
+	outbw(0, io + SZDC_SET_DATA_BUS);
 	drvWork->available = 0;
 	*off += (unsigned)drvWork->image_size;
 	return drvWork->image_size;
@@ -564,7 +564,7 @@ static int sharpzdc_status(struct drvWork_s *drvWork, char *buf, size_t size, lo
 	if (size >= 4) {
 		buf[3] = 'A';
 	}
-	outbw(0, io + SZDC_DATA_BUS);
+	outbw(0, io + SZDC_SET_DATA_BUS);
 	*off += size;
 	return size;
 }
@@ -572,7 +572,7 @@ static int sharpzdc_shutterclear(struct drvWork_s *drvWork)
 {
 	ioaddr_t io = drvWork->io;
 	clearw(SZDC_FLAGS1_SHUTTER, io + SZDC_FLAGS1);
-	outbw(0, io + SZDC_DATA_BUS);
+	outbw(0, io + SZDC_SET_DATA_BUS);
 	return 1;
 }
 static int sharpzdc_setiris(struct drvWork_s *drvWork)
@@ -581,7 +581,7 @@ static int sharpzdc_setiris(struct drvWork_s *drvWork)
 	EnableSendDataToMCon(io);
 	SendDataToMCon(io, 0xF0A, drvWork->iris);
 	DisableSendDataToMCon(io, 0);
-	outbw(0, io + SZDC_DATA_BUS);
+	outbw(0, io + SZDC_SET_DATA_BUS);
 	return 1;
 }
 static int skip_spaces(const char *s) {
@@ -659,7 +659,7 @@ static int param_viewsize(struct drvWork_s *drvWork, const char *data, int rotat
 {
 	int val;
 	int ret;
-	unsigned short w, h, z, l; /* r10, r9, r7, r8 */
+	unsigned short w, h, z, l;
 	unsigned short reald1, reald2;
 	unsigned short zoomd1, zoomd2;
 	unsigned short temp1, temp2;
