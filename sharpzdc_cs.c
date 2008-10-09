@@ -16,6 +16,8 @@
 #define SZDC_FLAGS1_SHUTTER	0x0008
 
 #define SZDC_FLAGS2		0x2	/* bw */
+#define SZDC_FLAGS2_XFLIP	0x0008
+
 #define SZDC_DATA		0x4	/* l */
 
 #define SZDC_DATA_BUS		0x6	/* bw */
@@ -485,7 +487,7 @@ static void get_photo_rotate(struct drvWork_s *drvWork, void *buf)
 }
 
 static int sharpzdc_get(struct drvWork_s *drvWork, char *buf, size_t size, loff_t *off) {
-	unsigned short r0, r2, r3, r5, r12, lr;
+	unsigned short dram1, dram2;
 	ioaddr_t io = drvWork->io;
 	if (size < drvWork->image_size
 		|| drvWork->image_size == 0) {
@@ -500,33 +502,30 @@ static int sharpzdc_get(struct drvWork_s *drvWork, char *buf, size_t size, loff_
 		clearw(0x4000, io + SZDC_FLAGS1);
 		setw(0x4000, io + SZDC_FLAGS2);
 	}
-	r2 = drvWork->field_28;
-	r5 = drvWork->field_2A;
-	if (drvWork->readmode & (SZDC_READMODE_XFLIP | SZDC_READMODE_YFLIP)) {
-		r0 = r2 & 0x3f;
-		r2 = r2 & 0x3f00;
-		r3 = r5 & 0x3f;
-		lr = r5 & 0x3f00;
-		r5 = 0;
-		r12 = r0;
-		if (drvWork->readmode & SZDC_READMODE_XFLIP) {
-			r0 = r3;
-			r3 = r12;
-			r5 |= 0x4000;
-		}
-		if (drvWork->readmode & SZDC_READMODE_YFLIP) {
-			r2 = lr;
-			r5 |= 0x8000;
-		}
-		r2 = r0 | r2;
-		r5 = r5 | r3;
-	}
-	SetDRAMCtrl(io, 1, r2);
-	SetDRAMCtrl(io, 2, r5 & 0xc0ff);
-	if (r5 & 0x4000) {
-		setw(0x0008, io + SZDC_FLAGS2);
+
+	dram1 = 0;
+	dram2 = 0;
+	if (drvWork->readmode & SZDC_READMODE_XFLIP) {
+		dram1 |= drvWork->field_2A & 0x3f;
+		dram2 |= drvWork->field_28 & 0x3f;
+		dram2 |= 0x4000;
 	} else {
-		clearw(0x0008, io + SZDC_FLAGS2);
+		dram1 |= drvWork->field_28 & 0x3f;
+		dram2 |= drvWork->field_2A & 0x3f;
+	}
+	if (drvWork->readmode & SZDC_READMODE_YFLIP) {
+		dram1 |= drvWork->field_2A & 0x3f00;
+		dram2 |= 0x8000;
+	} else {
+		dram1 |= drvWork->field_28 & 0x3f00;
+	}
+	SetDRAMCtrl(io, 1, dram1);
+	SetDRAMCtrl(io, 2, dram2);
+
+	if (drvWork->readmode & SZDC_READMODE_XFLIP) {
+		setw(SZDC_FLAGS2_XFLIP, io + SZDC_FLAGS2);
+	} else {
+		clearw(SZDC_FLAGS2_XFLIP, io + SZDC_FLAGS2);
 	}
 
 	setw(SZDC_FLAGS1_RESET_PTR, io + SZDC_FLAGS1);
