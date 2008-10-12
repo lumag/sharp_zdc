@@ -2,6 +2,7 @@
 #include <linux/module.h>
 #include <linux/fs.h>
 #include <linux/miscdevice.h>
+#include <linux/firmware.h>
 
 #include <pcmcia/cs_types.h>
 #include <pcmcia/cs.h>
@@ -26,7 +27,7 @@
 #define SZDC_MCON_RO		0x0001 /* at least it seems so */
 #define SZDC_MCON_STROBE	0x0002
 #define SZDC_MCON_DISABLED	0x0008
-#define SZDC_MCON_ENABLED2	0x0010 /* seems to depend on MCON_DISABLED */
+#define SZDC_MCON_ENABLED2	0x0010 /* seems to depend on !MCON_DISABLED */
 #define SZDC_MCON_READY		0x0020
 #define SZDC_MCON_RESET		0x0040 /* toggled to start program */
 
@@ -115,6 +116,36 @@ static inline void outb(u8 data, ioaddr_t io)
 		d &= ~(bit);	   \
 		outbw(d, io);  \
 	}
+
+static const unsigned short sharpzdc_params[] = {
+	0xFA0,	0,
+	0xF0E,	0x50,
+	0xF0F,	0x60,
+	0xF0B,	1,
+	0xF0C,	3,
+	0xF0D,	2,
+	0xF0A,	0x60,
+};
+static const unsigned short sharpzdc_camcore[] = {
+	0x50,	0x25,
+	0x52,	0xcd,
+	0x54,	0x55,
+	0x56,	0x9d,
+	0x50,	0x25,
+	0x52,	0xcd,
+	0x60,	0x1285,
+};
+
+static const unsigned char sharpzdc_gamma[] = {
+	0x00, 0x03, 0x05, 0x07, 0x09, 0x0a, 0x0c, 0x0d,
+	0x0f, 0x10, 0x11, 0x12, 0x13, 0x15, 0x16, 0x17,
+	0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
+	0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x25, 0x26,
+	0x27, 0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2c, 0x2d,
+	0x2e, 0x2f, 0x30, 0x30, 0x31, 0x32, 0x33, 0x34,
+	0x34, 0x35, 0x36, 0x37, 0x37, 0x38, 0x39, 0x3a,
+	0x3a, 0x3b, 0x3c, 0x3d, 0x3d, 0x3e, 0x3f, 0x3f,
+};
 
 
 static void SetCamCoreData(ioaddr_t io, unsigned short addr, unsigned short data) {
@@ -265,23 +296,6 @@ static void SendDataToMCon(ioaddr_t io, unsigned short addr, unsigned short data
 
 	setw(SZDC_MCON_RO, io + SZDC_MCON);
 }
-static int SendProgToMCon(ioaddr_t io, const unsigned short* prog, unsigned short size) {
-	int ret;
-	int i;
-	if (size > 0x1000)
-		return 0;
-	if (size == 0)
-		return 1;
-	ret = EnableSendDataToMCon(io);
-	if (ret == 0)
-		return 0;
-
-	for (i = 0; i < size && prog[i] != 0xffff; i++)
-		SendDataToMCon(io, i, prog[i]);
-
-	DisableSendDataToMCon(io, 1);
-	return 1;
-}
 static int SetGammaData(ioaddr_t io, const void*gamma, unsigned char elemsize)
 {
 	if (elemsize > 2) {
@@ -304,7 +318,6 @@ static int SetGammaData(ioaddr_t io, const void*gamma, unsigned char elemsize)
 	SetCamCoreData(io, 0x44, 0);
 	return 1;
 }
-#include "sharpzdc_ag6exe.h"
 static void set_camera_param(ioaddr_t io) {
 	int ret;
 	int i;
@@ -328,8 +341,23 @@ static void set_camera_param(ioaddr_t io) {
 	}
 }
 
-static void sharpzdc_start(struct drvWork_s *drvWork) {
+static int sharpzdc_start(struct drvWork_s *drvWork) {
 	ioaddr_t io = drvWork->io;
+	const struct firmware *ag6exe;
+	int ret;
+	int i;
+
+	ret = request_firmware(&ag6exe, "ag6exe.bin", &zdcdev->dev);
+	if (ret) {
+		dev_err(&zdcdev->dev, "firmware ag6exe.bin not available\n");
+		return ret;
+	}
+	if (ag6exe->size == 0 || ag6exe->size > 0x2000 ||
+			ag6exe->size % sizeof(unsigned short) != 0) {
+		dev_err(&zdcdev->dev, "invalid firmware ag6exe.bin\n");
+		release_firmware(ag6exe);
+		return -EINVAL;
+	}
 
 	outbw(0, io + SZDC_FLAGS1);
 	outbw(0, io + SZDC_FLAGS2);
@@ -386,10 +414,26 @@ static void sharpzdc_start(struct drvWork_s *drvWork) {
 	drvWork->field_30 = 0xA0;
 //	drvWork->field_34 = 0x400;
 	set_camera_param(io);
-	SendProgToMCon(io, ag6exe, sizeof(ag6exe)/sizeof(*ag6exe));
+
+	ret = EnableSendDataToMCon(io);
+	if (ret == 0) {
+		release_firmware(ag6exe);
+		return -ENOTTY;
+	}
+
+	for (i = 0; i < ag6exe->size/2 && *((unsigned short *)ag6exe->data) != 0xffff; i++) {
+		SendDataToMCon(io, i, ((unsigned short *)ag6exe->data)[i] );
+	}
+
+	DisableSendDataToMCon(io, 1);
+
 	EnableSendDataToMCon(io);
 	SendDataToMCon(io, 0xF0A, 0x60);
 	DisableSendDataToMCon(io, 0);
+
+	release_firmware(ag6exe);
+
+	return 0;
 }
 
 static void sharpzdc_stop(struct drvWork_s *drvWork) {
@@ -867,11 +911,9 @@ static int sharpzdc_open(struct inode *inode, struct file *file)
 //	CardServices(ResumeCard, dev->handle);
 
 	drvWork->io = zdcdev->io.BasePort1;
-	sharpzdc_start(drvWork);
+	return sharpzdc_start(drvWork);
 
 //	MOD_INC_USE_COUNT;
-
-	return 0;
 }
 
 static int sharpzdc_close(struct inode *inode, struct file *file)
@@ -1131,4 +1173,5 @@ module_exit(sharpzdc_exit);
 MODULE_AUTHOR("Dmitry Baryshkov");
 MODULE_DESCRIPTION("Sharp CE-AG06 camera driver");
 MODULE_LICENSE("GPL");
+MODULE_FIRMWARE("ag6exe.bin");
 
