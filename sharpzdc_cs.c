@@ -55,12 +55,10 @@
 
 static int dev_maj;
 
-typedef struct {
+struct sharpzdc_info {
 	struct pcmcia_device	*p_dev;
 	struct miscdevice	mdev;
-} sharpzdc_info_t;
 
-struct drvWork_s {
 //	int	field_00;
 //	int	field_04;
 //	int	field_08;
@@ -83,9 +81,10 @@ struct drvWork_s {
 	unsigned short	iris;
 	char	available;
 //	int	hw_status; /* -1 => N/A, 0 => Stopped, >0 => working */
+
 };
-static struct drvWork_s* drvWork = &(struct drvWork_s){};
-static struct pcmcia_device *zdcdev;
+
+static struct sharpzdc_info *zdcinfo;
 
 // inl is usual
 /*
@@ -341,20 +340,20 @@ static void set_camera_param(ioaddr_t io) {
 	}
 }
 
-static int sharpzdc_start(struct drvWork_s *drvWork) {
-	ioaddr_t io = drvWork->io;
+static int sharpzdc_start(struct sharpzdc_info *zdcinfo) {
+	ioaddr_t io = zdcinfo->io;
 	const struct firmware *ag6exe;
 	int ret;
 	int i;
 
-	ret = request_firmware(&ag6exe, "ag6exe.bin", &zdcdev->dev);
+	ret = request_firmware(&ag6exe, "ag6exe.bin", &zdcinfo->p_dev->dev);
 	if (ret) {
-		dev_err(&zdcdev->dev, "firmware ag6exe.bin not available\n");
+		dev_err(&zdcinfo->p_dev->dev, "firmware ag6exe.bin not available\n");
 		return ret;
 	}
 	if (ag6exe->size == 0 || ag6exe->size > 0x2000 ||
 			ag6exe->size % sizeof(unsigned short) != 0) {
-		dev_err(&zdcdev->dev, "invalid firmware ag6exe.bin\n");
+		dev_err(&zdcinfo->p_dev->dev, "invalid firmware ag6exe.bin\n");
 		release_firmware(ag6exe);
 		return -EINVAL;
 	}
@@ -405,14 +404,15 @@ static int sharpzdc_start(struct drvWork_s *drvWork) {
 	setw(0x4000, io + SZDC_FLAGS2);
 
 
-	drvWork->field_2A = 0xA;
-//	drvWork->field_2C = 4;
-	drvWork->field_26 = 0xF0A;
-//	drvWork->field_2E = 0x20;
-	drvWork->field_28 = 0;
-	drvWork->field_32 = 0x400;
-	drvWork->field_30 = 0xA0;
-//	drvWork->field_34 = 0x400;
+	zdcinfo->field_2A = 0xA;
+//	zdcinfo->field_2C = 4;
+	zdcinfo->field_26 = 0xF0A;
+//	zdcinfo->field_2E = 0x20;
+	zdcinfo->field_28 = 0;
+	zdcinfo->field_32 = 0x400;
+	zdcinfo->field_30 = 0xA0;
+//	zdcinfo->field_34 = 0x400;
+
 	set_camera_param(io);
 
 	ret = EnableSendDataToMCon(io);
@@ -436,8 +436,8 @@ static int sharpzdc_start(struct drvWork_s *drvWork) {
 	return 0;
 }
 
-static void sharpzdc_stop(struct drvWork_s *drvWork) {
-	ioaddr_t io = drvWork->io;
+static void sharpzdc_stop(struct sharpzdc_info *zdcinfo) {
+	ioaddr_t io = zdcinfo->io;
 
 	clearw(0x8000, io + SZDC_FLAGS2);
 	clearw(0x0200, io + SZDC_FLAGS1);
@@ -450,34 +450,34 @@ static void sharpzdc_stop(struct drvWork_s *drvWork) {
 	outbw(0, io + SZDC_SET_DATA_BUS);
 }
 
-static int sharpzdc_capture(struct drvWork_s *drvWork) {
-	ioaddr_t io = drvWork->io;
+static int sharpzdc_capture(struct sharpzdc_info *zdcinfo) {
+	ioaddr_t io = zdcinfo->io;
 	int ret;
 
 	ret = WaitCapture(io);
 	if (ret == 0)
 		return 0;
 
-	SetDRAMCtrl(io, 0, drvWork->field_26);
-	SetRealVGA(io, 2, drvWork->field_30);
-	SetRealVGA(io, 4, drvWork->field_32);
-	SetRealVGA(io, 5, drvWork->field_32); /* field_34 */
+	SetDRAMCtrl(io, 0, zdcinfo->field_26);
+	SetRealVGA(io, 2, zdcinfo->field_30);
+	SetRealVGA(io, 4, zdcinfo->field_32);
+	SetRealVGA(io, 5, zdcinfo->field_32); /* field_34 */
 
 	setw(SZDC_FLAGS1_CAPTURING, io + SZDC_FLAGS1);
 
 	outbw(0, io + SZDC_SET_DATA_BUS);
 
-	drvWork->available = 1;
+	zdcinfo->available = 1;
 	return 1;
 }
 
-static void get_photo_straight(struct drvWork_s *drvWork, void *buf)
+static void get_photo_straight(struct sharpzdc_info *zdcinfo, void *buf)
 {
-	int width = drvWork->width;
-	unsigned line_stride = drvWork->line_stride;
-	ioaddr_t io = drvWork->io;
+	int width = zdcinfo->width;
+	unsigned line_stride = zdcinfo->line_stride;
+	ioaddr_t io = zdcinfo->io;
 	void *cur_buf = buf;
-	void *end_buf = buf + line_stride * drvWork->height;
+	void *end_buf = buf + line_stride * zdcinfo->height;
 	if ((width & 1) != 0 ||
 			((line_stride & 3) != 0) ||
 			 (((long)buf & 3) != 0)) {
@@ -505,12 +505,12 @@ static void get_photo_straight(struct drvWork_s *drvWork, void *buf)
 		}
 	}
 }
-static void get_photo_rotate(struct drvWork_s *drvWork, void *buf)
+static void get_photo_rotate(struct sharpzdc_info *zdcinfo, void *buf)
 {
-	unsigned short line_stride = drvWork->line_stride;
-	void *last_offset = buf + (drvWork->width * (sizeof(short)));
-	ioaddr_t io = drvWork->io;
-	unsigned end_offset = line_stride * (drvWork->height - 1);
+	unsigned short line_stride = zdcinfo->line_stride;
+	void *last_offset = buf + (zdcinfo->width * (sizeof(short)));
+	ioaddr_t io = zdcinfo->io;
+	unsigned end_offset = line_stride * (zdcinfo->height - 1);
 	void *pos;
 
 
@@ -530,43 +530,43 @@ static void get_photo_rotate(struct drvWork_s *drvWork, void *buf)
 	}
 }
 
-static int sharpzdc_get(struct drvWork_s *drvWork, char *buf, size_t size, loff_t *off) {
+static int sharpzdc_get(struct sharpzdc_info *zdcinfo, char *buf, size_t size, loff_t *off) {
 	unsigned short dram1, dram2;
-	ioaddr_t io = drvWork->io;
-	if (size < drvWork->image_size
-		|| drvWork->image_size == 0) {
+	ioaddr_t io = zdcinfo->io;
+	if (size < zdcinfo->image_size
+		|| zdcinfo->image_size == 0) {
 			return 0;
 		}
-	if (drvWork->available == 0)
-		if (sharpzdc_capture(drvWork) == 0)
+	if (zdcinfo->available == 0)
+		if (sharpzdc_capture(zdcinfo) == 0)
 			return 0;
 	if (WaitCapture(io) == 0)
 		return 0;
-	if (drvWork->readmode & SZDC_READMODE_BETTER) {
+	if (zdcinfo->readmode & SZDC_READMODE_BETTER) {
 		clearw(0x4000, io + SZDC_FLAGS1);
 		setw(0x4000, io + SZDC_FLAGS2);
 	}
 
 	dram1 = 0;
 	dram2 = 0;
-	if (drvWork->readmode & SZDC_READMODE_XFLIP) {
-		dram1 |= drvWork->field_2A & 0x3f;
-		dram2 |= drvWork->field_28 & 0x3f;
+	if (zdcinfo->readmode & SZDC_READMODE_XFLIP) {
+		dram1 |= zdcinfo->field_2A & 0x3f;
+		dram2 |= zdcinfo->field_28 & 0x3f;
 		dram2 |= 0x4000;
 	} else {
-		dram1 |= drvWork->field_28 & 0x3f;
-		dram2 |= drvWork->field_2A & 0x3f;
+		dram1 |= zdcinfo->field_28 & 0x3f;
+		dram2 |= zdcinfo->field_2A & 0x3f;
 	}
-	if (drvWork->readmode & SZDC_READMODE_YFLIP) {
-		dram1 |= drvWork->field_2A & 0x3f00;
+	if (zdcinfo->readmode & SZDC_READMODE_YFLIP) {
+		dram1 |= zdcinfo->field_2A & 0x3f00;
 		dram2 |= 0x8000;
 	} else {
-		dram1 |= drvWork->field_28 & 0x3f00;
+		dram1 |= zdcinfo->field_28 & 0x3f00;
 	}
 	SetDRAMCtrl(io, 1, dram1);
 	SetDRAMCtrl(io, 2, dram2);
 
-	if (drvWork->readmode & SZDC_READMODE_XFLIP) {
+	if (zdcinfo->readmode & SZDC_READMODE_XFLIP) {
 		setw(SZDC_FLAGS2_XFLIP, io + SZDC_FLAGS2);
 	} else {
 		clearw(SZDC_FLAGS2_XFLIP, io + SZDC_FLAGS2);
@@ -577,21 +577,21 @@ static int sharpzdc_get(struct drvWork_s *drvWork, char *buf, size_t size, loff_
 	clearw(SZDC_FLAGS1_RESET_PTR, io + SZDC_FLAGS1);
 
 	inl(io + SZDC_DATA); /* XXX: was inw */
-	if (drvWork->readmode & SZDC_READMODE_ROTATE)
-		get_photo_rotate(drvWork, buf);
+	if (zdcinfo->readmode & SZDC_READMODE_ROTATE)
+		get_photo_rotate(zdcinfo, buf);
 	else
-		get_photo_straight(drvWork, buf);
-	if (drvWork->readmode & SZDC_READMODE_BETTER) {
+		get_photo_straight(zdcinfo, buf);
+	if (zdcinfo->readmode & SZDC_READMODE_BETTER) {
 		setw(0x4000, io + SZDC_FLAGS1);
 		clearw(0x4000, io + SZDC_FLAGS2);
 	}
 	outbw(0, io + SZDC_SET_DATA_BUS);
-	drvWork->available = 0;
-	*off += (unsigned)drvWork->image_size;
-	return drvWork->image_size;
+	zdcinfo->available = 0;
+	*off += (unsigned)zdcinfo->image_size;
+	return zdcinfo->image_size;
 }
-static int sharpzdc_status(struct drvWork_s *drvWork, char *buf, size_t size, loff_t *off) {
-	ioaddr_t io = drvWork->io;
+static int sharpzdc_status(struct sharpzdc_info *zdcinfo, char *buf, size_t size, loff_t *off) {
+	ioaddr_t io = zdcinfo->io;
 	unsigned short data;
 	if (size)
 		memset(buf, 0, size);
@@ -612,18 +612,18 @@ static int sharpzdc_status(struct drvWork_s *drvWork, char *buf, size_t size, lo
 	*off += size;
 	return size;
 }
-static int sharpzdc_shutterclear(struct drvWork_s *drvWork)
+static int sharpzdc_shutterclear(struct sharpzdc_info *zdcinfo)
 {
-	ioaddr_t io = drvWork->io;
+	ioaddr_t io = zdcinfo->io;
 	clearw(SZDC_FLAGS1_SHUTTER, io + SZDC_FLAGS1);
 	outbw(0, io + SZDC_SET_DATA_BUS);
 	return 1;
 }
-static int sharpzdc_setiris(struct drvWork_s *drvWork)
+static int sharpzdc_setiris(struct sharpzdc_info *zdcinfo)
 {
-	ioaddr_t io = drvWork->io;
+	ioaddr_t io = zdcinfo->io;
 	EnableSendDataToMCon(io);
-	SendDataToMCon(io, 0xF0A, drvWork->iris);
+	SendDataToMCon(io, 0xF0A, zdcinfo->iris);
 	DisableSendDataToMCon(io, 0);
 	outbw(0, io + SZDC_SET_DATA_BUS);
 	return 1;
@@ -699,7 +699,7 @@ static int get_param_value(const char *str, char c, unsigned *resptr)
 	s += ret;
 	return s - str;
 }
-static int param_viewsize(struct drvWork_s *drvWork, const char *data, int rotate)
+static int param_viewsize(struct sharpzdc_info *zdcinfo, const char *data, int rotate)
 {
 	int val;
 	int ret;
@@ -752,51 +752,50 @@ static int param_viewsize(struct drvWork_s *drvWork, const char *data, int rotat
 		zoomd1 = 640*256 / temp1;
 	}
 
-	drvWork->available = 0;
+	zdcinfo->available = 0;
 	if (rotate)
-		drvWork->readmode |= SZDC_READMODE_ROTATE;
+		zdcinfo->readmode |= SZDC_READMODE_ROTATE;
 	else
-		drvWork->readmode &= ~SZDC_READMODE_ROTATE;
+		zdcinfo->readmode &= ~SZDC_READMODE_ROTATE;
 
 	if ((unsigned)l < (unsigned)(w*2)) {
 		l = w * 2;
 	}
-	drvWork->image_size = l * h;
-	drvWork->width = w;
-	drvWork->height = h;
-	drvWork->line_stride = l;
-//	drvWork->field_2C = 4;
-//	drvWork->field_2E = 0x20;
-	drvWork->field_30 = zoomd1;
-	drvWork->field_32 = temp1;
-//	drvWork->field_34 = temp1;
+	zdcinfo->image_size = l * h;
+	zdcinfo->width = w;
+	zdcinfo->height = h;
+	zdcinfo->line_stride = l;
+//	zdcinfo->field_2C = 4;
+//	zdcinfo->field_2E = 0x20;
+	zdcinfo->field_30 = zoomd1;
+	zdcinfo->field_32 = temp1;
+//	zdcinfo->field_34 = temp1;
 
-	drvWork->field_26 = ((zoomd2 >> 3) << 8) | ((zoomd1 >> 4) << 0);
+	zdcinfo->field_26 = ((zoomd2 >> 3) << 8) | ((zoomd1 >> 4) << 0);
 
 	temp1 = (zoomd1 - reald1) >> 1;
 	temp2 = (zoomd2 - reald2) >> 1;
-	drvWork->field_28 = ((temp2 >> 3) << 8) | (temp1 >> 4);
+	zdcinfo->field_28 = ((temp2 >> 3) << 8) | (temp1 >> 4);
 
 	temp1 = (zoomd1 - temp1);
 	temp2 = (zoomd2 - temp2);
-	drvWork->field_2A =  ((temp2 >> 3 )<< 8) | (temp1 >> 4);
+	zdcinfo->field_2A =  ((temp2 >> 3 )<< 8) | (temp1 >> 4);
 	return 1;
 }
-static int param_modeset(struct drvWork_s *drvWork, const char *data)
+static int param_modeset(struct sharpzdc_info *zdcinfo, const char *data)
 {
-	ioaddr_t io = drvWork->io;
+	ioaddr_t io = zdcinfo->io;
 	int val;
-	unsigned orig = drvWork->readmode;
+	unsigned orig = zdcinfo->readmode;
 	int ret = get_param_value(data, '=', &val);
 	unsigned new, diff;
 	if (ret == 0)
 		return 0;
-	drvWork->readmode = new = (val & 0xf) | (drvWork->readmode & SZDC_READMODE_ROTATE);
+	zdcinfo->readmode = new = (val & 0xf) | (zdcinfo->readmode & SZDC_READMODE_ROTATE);
 	diff = new ^ orig;
-//	val = new & SZDC_READMODE_BETTER;
 	if (diff & SZDC_READMODE_BETTER) {
-		WaitCapture(drvWork->io);
-		if (drvWork->readmode & SZDC_READMODE_BETTER) {
+		WaitCapture(zdcinfo->io);
+		if (zdcinfo->readmode & SZDC_READMODE_BETTER) {
 			setw(0x4000, io + SZDC_FLAGS1);
 			clearw(0x4000, io + SZDC_FLAGS2);
 		} else {
@@ -806,7 +805,7 @@ static int param_modeset(struct drvWork_s *drvWork, const char *data)
 	}
 	return 1;
 }
-static int param_irisset(struct drvWork_s *drvWork, const char *data)
+static int param_irisset(struct sharpzdc_info *zdcinfo, const char *data)
 {
 	int val;
 	int ret = get_param_value(data, '=', &val);
@@ -818,27 +817,27 @@ static int param_irisset(struct drvWork_s *drvWork, const char *data)
 		val = 0xff;
 	}
 
-	drvWork->iris = (unsigned short) val;
+	zdcinfo->iris = (unsigned short) val;
 
-	return sharpzdc_setiris(drvWork);
+	return sharpzdc_setiris(zdcinfo);
 }
-static int sharpzdc_param_part(struct drvWork_s *drvWork, const char *param) {
+static int sharpzdc_param_part(struct sharpzdc_info *zdcinfo, const char *param) {
 	char c;
 	param += skip_spaces(param);
 	c = *param;
 	switch (c) {
 		case 'B':
-			return sharpzdc_shutterclear(drvWork);
+			return sharpzdc_shutterclear(zdcinfo);
 		case 'C':
-			return sharpzdc_capture(drvWork);
+			return sharpzdc_capture(zdcinfo);
 		case 'I':
-			return param_irisset(drvWork, param + 1);
+			return param_irisset(zdcinfo, param + 1);
 		case 'M':
-			return param_modeset(drvWork, param + 1);
+			return param_modeset(zdcinfo, param + 1);
 		case 'R':
-			return param_viewsize(drvWork, param + 1, 1);
+			return param_viewsize(zdcinfo, param + 1, 1);
 		case 'S':
-			return param_viewsize(drvWork, param + 1, 0);
+			return param_viewsize(zdcinfo, param + 1, 0);
 		default:
 			return 0;
 		case '#':
@@ -873,7 +872,7 @@ static int get_param_line(char *buf, int size, const char *param, int len)
 	*buf = '\0';
 	return i;
 }
-static ssize_t sharpzdc_param(struct drvWork_s *drvWork, const char *buf, size_t size, loff_t *off)
+static ssize_t sharpzdc_param(struct sharpzdc_info *zdcinfo, const char *buf, size_t size, loff_t *off)
 {
 	const char *ptr = buf;
 	int left = size;
@@ -886,7 +885,7 @@ static ssize_t sharpzdc_param(struct drvWork_s *drvWork, const char *buf, size_t
 		if (tlen == 0)
 			continue;
 
-		if (sharpzdc_param_part(drvWork, temp) == 0)
+		if (sharpzdc_param_part(zdcinfo, temp) == 0)
 			break;
 		ptr += tlen;
 		left -= tlen;
@@ -896,7 +895,7 @@ static ssize_t sharpzdc_param(struct drvWork_s *drvWork, const char *buf, size_t
 }
 static int sharpzdc_open(struct inode *inode, struct file *file)
 {
-//	if (drvWork->hw_status < 0) {
+//	if (zdcinfo->hw_status < 0) {
 //		printk(KERN_WARNING "sharpzdc_cs: Device Dead!\n");
 //		return -EBUSY;
 //	}
@@ -906,25 +905,22 @@ static int sharpzdc_open(struct inode *inode, struct file *file)
 //		return -EBUSY;
 //	}
 
-//	drvWork->hw_status = 1;
+//	zdcinfo->hw_status = 1;
 
 //	CardServices(ResumeCard, dev->handle);
 
-	drvWork->io = zdcdev->io.BasePort1;
-	return sharpzdc_start(drvWork);
+	zdcinfo->io = zdcinfo->p_dev->io.BasePort1;
 
-//	MOD_INC_USE_COUNT;
+	return sharpzdc_start(zdcinfo);
 }
 
 static int sharpzdc_close(struct inode *inode, struct file *file)
 {
-//	if (drvWork->hw_status > 0) {
-		sharpzdc_stop(drvWork);
-//		drvWork->hw_status = 0;
+//	if (zdcinfo->hw_status > 0) {
+		sharpzdc_stop(zdcinfo);
+//		zdcinfo->hw_status = 0;
 ////		CardServices(SuspendCard, dev->handle);
 //	}
-
-//	MOD_DEC_USE_COUNT;
 
 	return 0;
 }
@@ -936,16 +932,16 @@ static int sharpzdc_ioctl(struct inode *inode, struct file *file,
 }
 
 static ssize_t sharpzdc_read(struct file *file, char *buf, size_t size, loff_t *off) {
-	if ((drvWork->readmode & SZDC_READMODE_STATUS))
-		return sharpzdc_status(drvWork, buf, size, off);
+	if ((zdcinfo->readmode & SZDC_READMODE_STATUS))
+		return sharpzdc_status(zdcinfo, buf, size, off);
 
-//	if (drvWork->hw_status < 0)
-//		return drvWork->readmode & 1;
+//	if (zdcinfo->hw_status < 0)
+//		return zdcinfo->readmode & 1;
 
-	return sharpzdc_get(drvWork, buf, size, off);
+	return sharpzdc_get(zdcinfo, buf, size, off);
 }
 static ssize_t sharpzdc_write(struct file *file, const char *buf, size_t size, loff_t *off) {
-	return sharpzdc_param(drvWork, buf, size, off);
+	return sharpzdc_param(zdcinfo, buf, size, off);
 }
 
 static struct file_operations zdc_ops = {
@@ -1091,7 +1087,7 @@ cs_failed:
 
 static int sharpzdc_probe(struct pcmcia_device *link)
 {
-	sharpzdc_info_t *info;
+	struct sharpzdc_info *info;
 	int ret;
 
 	info = kzalloc(sizeof(*info), GFP_KERNEL);
@@ -1118,7 +1114,7 @@ static int sharpzdc_probe(struct pcmcia_device *link)
 	if (ret)
 		goto err2;
 
-	zdcdev = link;
+	zdcinfo = info;
 
 	return 0;
 err2:
@@ -1130,8 +1126,8 @@ err:
 
 static void sharpzdc_detach(struct pcmcia_device *link)
 {
-	sharpzdc_info_t *info = link->priv;
-	zdcdev = NULL;
+	struct sharpzdc_info *info = link->priv;
+	zdcinfo = NULL;
 	misc_deregister(&info->mdev);
 	pcmcia_disable_device(link);
 	kfree(info);
