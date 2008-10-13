@@ -90,12 +90,6 @@ static int sharpzdc_querycap(struct file *file, void *priv,
 	return 0;
 }
 
-static int sharpzdc_querystd(struct file *file, void *priv, v4l2_std_id *id)
-{
-	*id = V4L2_STD_UNKNOWN;
-	return 0;
-}
-
 static int sharpzdc_enum_input(struct file *file, void *private_data,
 		struct v4l2_input *input)
 {
@@ -109,19 +103,19 @@ static int sharpzdc_enum_input(struct file *file, void *private_data,
 	return 0;
 }
 
+static int sharpzdc_g_input(struct file *file, void *private_data,
+		unsigned int *index)
+{
+	*index = 0;
+	return 0;
+}
+
 static int sharpzdc_s_input(struct file *file, void *private_data,
 		unsigned int index)
 {
 	if (index != 0)
 		return -EINVAL;
 
-	return 0;
-}
-
-static int sharpzdc_g_input(struct file *file, void *private_data,
-		unsigned int *index)
-{
-	*index = 0;
 	return 0;
 }
 
@@ -154,14 +148,51 @@ static int sharpzdc_g_fmt_vid_cap(struct file *file, void *private_data,
 	return 0;
 }
 
+static int sharpzdc_try_fmt_vid_cap(struct file *file, void *private_data,
+		struct v4l2_format *f)
+{
+	// FIXME: width, height, bytesperline, sizeimage limitation wrt rotating and zoom.
+	if (f->fmt.pix.width <= 0 || f->fmt.pix.width >= 640 ||
+	    f->fmt.pix.height <= 0 || f->fmt.pix.height >= 480)
+		return 0;
+
+	if (f->fmt.pix.bytesperline < (f->fmt.pix.width * 2))
+		f->fmt.pix.bytesperline = f->fmt.pix.width * 2;
+
+	if (f->fmt.pix.sizeimage < (f->fmt.pix.bytesperline * f->fmt.pix.height))
+		f->fmt.pix.sizeimage = f->fmt.pix.bytesperline * f->fmt.pix.height;
+
+	f->fmt.pix.pixelformat = V4L2_PIX_FMT_RGB565;
+	f->fmt.pix.field = V4L2_FIELD_NONE;
+	f->fmt.pix.colorspace = V4L2_COLORSPACE_SRGB;
+
+	return 0;
+}
+
+static int sharpzdc_s_fmt_vid_cap(struct file *file, void *private_data,
+		struct v4l2_format *f)
+{
+	// FIXME: check for capturing status and return -EBUSY
+
+	int ret = sharpzdc_try_fmt_vid_cap(file, private_data, f);
+	if (ret < 0)
+		return ret;
+
+	// FIXME: apply
+
+	return 0;
+}
+
+
 static struct v4l2_ioctl_ops sharpzdc_ioctl_ops = {
 	.vidioc_querycap	= sharpzdc_querycap,
-	.vidioc_querystd	= sharpzdc_querystd,
 	.vidioc_enum_input	= sharpzdc_enum_input,
-	.vidioc_s_input		= sharpzdc_s_input,
 	.vidioc_g_input		= sharpzdc_g_input,
+	.vidioc_s_input		= sharpzdc_s_input,
 	.vidioc_enum_fmt_vid_cap = sharpzdc_enum_fmt_vid_cap,
 	.vidioc_g_fmt_vid_cap	= sharpzdc_g_fmt_vid_cap,
+	.vidioc_s_fmt_vid_cap	= sharpzdc_s_fmt_vid_cap,
+	.vidioc_try_fmt_vid_cap	= sharpzdc_try_fmt_vid_cap,
 };
 
 #define CS_CHECK(fn, ret) \
