@@ -1,7 +1,12 @@
+#define DEBUG
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/fs.h>
-#include <linux/miscdevice.h>
+#include <linux/kref.h>
+#include <linux/version.h>
+
+#include <media/v4l2-dev.h>
+#include <media/v4l2-ioctl.h>
 
 #include <pcmcia/cs_types.h>
 #include <pcmcia/cs.h>
@@ -9,15 +14,154 @@
 #include <pcmcia/cisreg.h>
 #include <pcmcia/ds.h>
 
-static int dev_maj;
-
-typedef struct {
+struct sharpzdc_info {
+	struct kref		ref;
 	struct pcmcia_device	*p_dev;
-	struct miscdevice	mdev;
-} sharpzdc_info_t;
+	struct video_device	*vdev;
+};
 
-static struct file_operations zdc_ops = {
+#define to_zdcinfo(r)	container_of(r, struct sharpzdc_info, ref)
+
+static void sharpzdc_info_release(struct kref *ref)
+{
+	struct sharpzdc_info *info = to_zdcinfo(ref);
+
+	pr_debug("%s\n", __func__);
+
+	kfree(info);
+}
+
+static void sharpzdc_vdev_release(struct video_device *vdev)
+{
+	struct sharpzdc_info *info = video_get_drvdata(vdev);
+
+	pr_debug("%s\n", __func__);
+
+	video_device_release(vdev);
+
+	kref_put(&info->ref, sharpzdc_info_release);
+}
+
+static int sharpzdc_open(struct inode *inode, struct file *fp)
+{
+	struct video_device *vdev = video_devdata(fp);
+	struct sharpzdc_info *info = video_get_drvdata(vdev);
+
+	pr_debug("%s\n", __func__);
+
+	kref_get(&info->ref);
+	fp->private_data = info;
+
+	return 0;
+}
+
+static int sharpzdc_release(struct inode *inode, struct file *fp)
+{
+	struct sharpzdc_info *info = fp->private_data;
+
+	pr_debug("%s\n", __func__);
+
+	kref_put(&info->ref, sharpzdc_info_release);
+	return 0;
+}
+
+static struct file_operations sharpzdc_fops = {
 	.owner		= THIS_MODULE,
+	.open		= sharpzdc_open,
+	.release	= sharpzdc_release,
+	.ioctl		= video_ioctl2,
+#ifdef CONFIG_COMPAT
+	.compat_ioctl	= v4l_compat_ioctl32,
+#endif
+	.llseek		= no_llseek,
+};
+
+static int sharpzdc_querycap(struct file *file, void *priv,
+		struct v4l2_capability *cap)
+{
+	struct sharpzdc_info *info = priv;
+
+	strcpy(cap->driver, "sharpzdc_cs");
+	strcpy(cap->card, "CE-AG06");
+	snprintf(cap->bus_info, sizeof(cap->bus_info),
+			"pcmcia:%s", dev_name(&info->p_dev->dev));
+	cap->version = KERNEL_VERSION(0, 0, 1);
+	cap->capabilities = V4L2_CAP_VIDEO_CAPTURE;
+	return 0;
+}
+
+static int sharpzdc_querystd(struct file *file, void *priv, v4l2_std_id *id)
+{
+	*id = V4L2_STD_UNKNOWN;
+	return 0;
+}
+
+static int sharpzdc_enum_input(struct file *file, void *private_data,
+		struct v4l2_input *input)
+{
+	if (input->index > 0)
+		return -EINVAL;
+
+	strcpy(input->name, "Camera");
+	input->type = V4L2_INPUT_TYPE_CAMERA;
+	input->std = V4L2_STD_UNKNOWN;
+
+	return 0;
+}
+
+static int sharpzdc_s_input(struct file *file, void *private_data,
+		unsigned int index)
+{
+	if (index != 0)
+		return -EINVAL;
+
+	return 0;
+}
+
+static int sharpzdc_g_input(struct file *file, void *private_data,
+		unsigned int *index)
+{
+	*index = 0;
+	return 0;
+}
+
+static int sharpzdc_enum_fmt_vid_cap(struct file *file, void *private_data,
+		struct v4l2_fmtdesc *f)
+{
+	if (f->index > 0)
+		return -EINVAL;
+
+	f->pixelformat = V4L2_PIX_FMT_RGB565;
+	strcpy(f->description, "RGB565");
+
+	return 0;
+}
+
+static int sharpzdc_g_fmt_vid_cap(struct file *file, void *private_data,
+		struct v4l2_format *f)
+{
+	// FIXME: width, height, bytesperline, sizeimage,
+#if 1
+	f->fmt.pix.width = 320;
+	f->fmt.pix.height = 240;
+	f->fmt.pix.bytesperline = f->fmt.pix.width * 2;
+	f->fmt.pix.sizeimage = f->fmt.pix.bytesperline * f->fmt.pix.height;
+#endif
+	f->fmt.pix.pixelformat = V4L2_PIX_FMT_RGB565;
+	f->fmt.pix.field = V4L2_FIELD_NONE;
+	f->fmt.pix.colorspace = V4L2_COLORSPACE_SRGB;
+
+	return 0;
+}
+
+static struct v4l2_ioctl_ops sharpzdc_ioctl_ops = {
+	.vidioc_querycap	= sharpzdc_querycap,
+	.vidioc_querystd	= sharpzdc_querystd,
+	.vidioc_enum_input	= sharpzdc_enum_input,
+	.vidioc_s_input		= sharpzdc_s_input,
+	.vidioc_g_input		= sharpzdc_g_input,
+	.vidioc_enum_fmt_vid_cap = sharpzdc_enum_fmt_vid_cap,
+	.vidioc_g_fmt_vid_cap	= sharpzdc_g_fmt_vid_cap,
 };
 
 #define CS_CHECK(fn, ret) \
@@ -37,6 +181,8 @@ static int sharpzdc_config(struct pcmcia_device *link)
 	int last_fn, last_ret;
 	win_req_t req;
 	memreq_t map;
+
+	pr_debug("%s\n", __func__);
 
 	tuple.TupleData = (cisdata_t *)buf;
 	tuple.TupleDataMax = sizeof(buf);
@@ -154,12 +300,16 @@ cs_failed:
 
 static int sharpzdc_probe(struct pcmcia_device *link)
 {
-	sharpzdc_info_t *info;
+	struct sharpzdc_info *info;
 	int ret;
+
+	pr_debug("%s\n", __func__);
 
 	info = kzalloc(sizeof(*info), GFP_KERNEL);
 	if (!info)
 		return -ENOMEM;
+
+	kref_init(&info->ref);
 
 	info->p_dev = link;
 	link->priv = info;
@@ -173,28 +323,48 @@ static int sharpzdc_probe(struct pcmcia_device *link)
 	if (ret)
 		goto err;
 
-	info->mdev.minor = 148;
-	info->mdev.name = "sharpzdc";
-	info->mdev.fops = &zdc_ops;
-	info->mdev.parent = &link->dev;
-	ret = misc_register(&info->mdev);
-	if (ret)
+	info->vdev = video_device_alloc();
+	if (info->vdev == NULL) {
+		ret = -ENOMEM;
 		goto err2;
+	}
+	kref_get(&info->ref);
+	video_set_drvdata(info->vdev, info);
+
+	info->vdev->parent = &link->dev;
+	info->vdev->fops = &sharpzdc_fops;
+	info->vdev->release = sharpzdc_vdev_release;
+	info->vdev->ioctl_ops = &sharpzdc_ioctl_ops;
+	info->vdev->tvnorms = V4L2_STD_UNKNOWN;
+	info->vdev->current_norm = V4L2_STD_UNKNOWN;
+	strncpy(info->vdev->name, "sharpzdc", sizeof(info->vdev->name));
+
+	ret = video_register_device(info->vdev, VFL_TYPE_GRABBER, -1);
+	if (ret < 0)
+		goto err3;
 
 	return 0;
+err3:
+	if (info->vdev) {
+		sharpzdc_vdev_release(info->vdev);
+		info->vdev = NULL;
+	}
 err2:
 	pcmcia_disable_device(link);
 err:
-	kfree(info);
+	kref_put(&info->ref, sharpzdc_info_release);
 	return ret;
 }
 
-static void sharpzdc_detach(struct pcmcia_device *link)
+static void sharpzdc_remove(struct pcmcia_device *link)
 {
-	sharpzdc_info_t *info = link->priv;
-	misc_deregister(&info->mdev);
+	struct sharpzdc_info *info = link->priv;
+	pr_debug("%s\n", __func__);
+
+	video_unregister_device(info->vdev);
+
 	pcmcia_disable_device(link);
-	kfree(info);
+	kref_put(&info->ref, sharpzdc_info_release);
 }
 
 static struct pcmcia_device_id sharpzdc_ids[] = {
@@ -210,21 +380,17 @@ static struct pcmcia_driver sharpzdc_driver = {
 	.drv.name	= "sharpzdc_cs",
 	.id_table	= sharpzdc_ids,
 	.probe		= sharpzdc_probe,
-	.remove		= sharpzdc_detach,
+	.remove		= sharpzdc_remove,
 };
 
 static int __init sharpzdc_init(void)
 {
-	/* XXX */
-	dev_maj = register_chrdev(0, "sharpzdc", &zdc_ops);
-
 	return pcmcia_register_driver(&sharpzdc_driver);
 }
 
 static void __exit sharpzdc_exit(void)
 {
 	pcmcia_unregister_driver(&sharpzdc_driver);
-	unregister_chrdev(dev_maj, "sharpzdc");
 }
 
 module_init(sharpzdc_init);
