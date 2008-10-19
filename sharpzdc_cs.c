@@ -132,6 +132,8 @@ static inline void outb(u8 data, ioaddr_t io)
 		outbw(d, io);  \
 	}
 
+#if 0
+
 static const unsigned short sharpzdc_params[] = {
 	0xFA0,	0,
 	0xF0E,	0x50,
@@ -967,6 +969,8 @@ static ssize_t sharpzdc_write(struct file *file, const char *buf, size_t size, l
 	struct sharpzdc_info *zdcinfo = video_get_drvdata(vdev);
 	return sharpzdc_param(zdcinfo, buf, size, off);
 }
+
+#endif
 
 static void sharpzdc_fillbuff(struct sharpzdc_info* info, struct videobuf_buffer *vb)
 {
