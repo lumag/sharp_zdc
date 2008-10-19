@@ -66,11 +66,11 @@ static void sharpzdc_thread_tick(struct sharpzdc_info *info)
 {
 	struct videobuf_buffer *vb;
 
-	unsigned long flags = 0;
+//	unsigned long flags = 0;
 
 	pr_debug("%s\n", __func__);
 
-	spin_lock_irqsave(&info->lock, flags);
+//	spin_lock_irqsave(&info->lock, flags);
 	if (list_empty(&info->queued))
 		goto unlock;
 
@@ -78,8 +78,8 @@ static void sharpzdc_thread_tick(struct sharpzdc_info *info)
 			 struct videobuf_buffer, queue);
 
 	/* Nobody is waiting on this buffer, return */
-	if (!waitqueue_active(&vb->done))
-		goto unlock;
+//	if (!waitqueue_active(&vb->done))
+//		goto unlock;
 
 	list_del(&vb->queue);
 
@@ -90,7 +90,7 @@ static void sharpzdc_thread_tick(struct sharpzdc_info *info)
 
 	wake_up(&vb->done);
 unlock:
-	spin_unlock_irqrestore(&info->lock, flags);
+//	spin_unlock_irqrestore(&info->lock, flags);
 	return;
 }
 
@@ -168,6 +168,7 @@ static void sharpzdc_buf_queue(struct videobuf_queue *q,
 
 	vb->state = VIDEOBUF_QUEUED;
 	list_add_tail(&vb->queue, &info->queued);
+	sharpzdc_thread_tick(info);
 }
 
 static struct videobuf_queue_ops sharpzdc_video_qops = {
@@ -288,7 +289,9 @@ static int sharpzdc_querycap(struct file *file, void *private_data,
 	snprintf(cap->bus_info, sizeof(cap->bus_info),
 			"pcmcia:%s", dev_name(&info->p_dev->dev));
 	cap->version = KERNEL_VERSION(0, 0, 1);
-	cap->capabilities = V4L2_CAP_VIDEO_CAPTURE | V4L2_CAP_READWRITE;
+	cap->capabilities = V4L2_CAP_VIDEO_CAPTURE |
+				V4L2_CAP_STREAMING |
+				V4L2_CAP_READWRITE;
 	return 0;
 }
 
@@ -361,9 +364,14 @@ static int sharpzdc_try_fmt_vid_cap(struct file *file, void *private_data,
 {
 	pr_debug("%s\n", __func__);
 	// FIXME: width, height, bytesperline, sizeimage limitation wrt rotating and zoom.
-	if (f->fmt.pix.width <= 0 || f->fmt.pix.width >= 640 ||
-	    f->fmt.pix.height <= 0 || f->fmt.pix.height >= 480)
-		return 0;
+	if (f->fmt.pix.width < 32)
+		f->fmt.pix.width = 32;
+	if (f->fmt.pix.width > 640)
+		f->fmt.pix.width = 640;
+	if (f->fmt.pix.height < 32)
+		f->fmt.pix.height = 32;
+	if (f->fmt.pix.height > 480)
+		f->fmt.pix.height = 480;
 
 	if (f->fmt.pix.bytesperline < (f->fmt.pix.width * 2))
 		f->fmt.pix.bytesperline = f->fmt.pix.width * 2;
@@ -395,6 +403,8 @@ static int sharpzdc_s_fmt_vid_cap(struct file *file, void *private_data,
 	// FIXME: width, height, bytesperline, sizeimage limitation wrt rotating and zoom.
 	info->width = f->fmt.pix.width;
 	info->height = f->fmt.pix.height;
+	info->bpl = f->fmt.pix.bytesperline;
+	info->size = f->fmt.pix.sizeimage;
 
 	return 0;
 }
@@ -659,6 +669,8 @@ static int sharpzdc_probe(struct pcmcia_device *link)
 
 	info->width = 320;
 	info->height = 240;
+	info->bpl = info->width * 2;
+	info->size = info->bpl * info->height;
 
 	info->vdev->parent = &link->dev;
 	info->vdev->fops = &sharpzdc_fops;
