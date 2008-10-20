@@ -1,4 +1,4 @@
-#define DEBUG
+//#define DEBUG
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/fs.h>
@@ -83,28 +83,12 @@ struct sharpzdc_info {
 	struct task_struct	*thread;
 	wait_queue_head_t	wq;
 
-//	int	field_00;
-//	int	field_04;
-//	int	field_08;
 	ioaddr_t io;
-//	int	field_10;
-//	int	field_14;
 	int	readmode;
 	int	image_size;
 	unsigned short	width;
 	unsigned short	height;
 	unsigned short	line_stride;
-	short	field_26;
-	unsigned short	field_28;
-	unsigned short	field_2A;
-//	short	field_2C;
-//	short	field_2E;
-	short	field_30;
-	short	field_32;
-//	short	field_34;
-	unsigned short	iris;
-	char	available;
-//	int	hw_status; /* -1 => N/A, 0 => Stopped, >0 => working */
 
 };
 
@@ -137,8 +121,6 @@ static inline void outb(u8 data, ioaddr_t io)
 		d &= ~(bit);	   \
 		outbw(d, io);  \
 	}
-
-#if 0
 
 static const unsigned short sharpzdc_params[] = {
 	0xFA0,	0,
@@ -236,7 +218,6 @@ static unsigned short eep_data_read(ioaddr_t io, unsigned char addr)
 
 static void InitTable_CEAG06(ioaddr_t io) {
 	int i;
-	unsigned short r;
 
 	for (i = 0; i < 0x1F; i++) {
 		SetCamCoreData(io, 0x70, i);
@@ -245,7 +226,7 @@ static void InitTable_CEAG06(ioaddr_t io) {
 	}
 
 	for (i = 0; i < 0x16; i+= 2) {
-		r = eep_data_read(io, i / 2 + 0x90);
+		unsigned short r = eep_data_read(io, i / 2 + 0x90);
 		SetCamCoreData(io, 0x78, i);
 		SetCamCoreData(io, 0x7A, r & 0xff);
 		SetCamCoreData(io, 0x78, i + 1);
@@ -253,7 +234,7 @@ static void InitTable_CEAG06(ioaddr_t io) {
 	}
 
 	for (i = 0; i < 0x10; i += 2) {
-		r = eep_data_read(io, i / 2 + 0xA0);
+		unsigned short r = eep_data_read(io, i / 2 + 0xA0);
 		SetCamCoreData(io, 0x78, i + 0x100);
 		SetCamCoreData(io, 0x7A, r & 0xff);
 		SetCamCoreData(io, 0x78, i + 0x101);
@@ -427,16 +408,6 @@ static int sharpzdc_start(struct sharpzdc_info *zdcinfo) {
 	clearw(0x4000, io + SZDC_FLAGS1);
 	setw(0x4000, io + SZDC_FLAGS2);
 
-
-	zdcinfo->field_2A = 0xA;
-//	zdcinfo->field_2C = 4;
-	zdcinfo->field_26 = 0xF0A;
-//	zdcinfo->field_2E = 0x20;
-	zdcinfo->field_28 = 0;
-	zdcinfo->field_32 = 0x400;
-	zdcinfo->field_30 = 0xA0;
-//	zdcinfo->field_34 = 0x400;
-
 	set_camera_param(io);
 
 	ret = EnableSendDataToMCon(io);
@@ -451,6 +422,9 @@ static int sharpzdc_start(struct sharpzdc_info *zdcinfo) {
 
 	DisableSendDataToMCon(io, 1);
 
+	/*
+	 * XXX: This is setiris
+	 */
 	EnableSendDataToMCon(io);
 	SendDataToMCon(io, 0xF0A, 0x60);
 	DisableSendDataToMCon(io, 0);
@@ -474,34 +448,13 @@ static void sharpzdc_stop(struct sharpzdc_info *zdcinfo) {
 	outbw(0, io + SZDC_SET_DATA_BUS);
 }
 
-static int sharpzdc_capture(struct sharpzdc_info *zdcinfo) {
-	ioaddr_t io = zdcinfo->io;
-	int ret;
-
-	ret = WaitCapture(io);
-	if (ret == 0)
-		return 0;
-
-	SetDRAMCtrl(io, 0, zdcinfo->field_26);
-	SetRealVGA(io, 2, zdcinfo->field_30);
-	SetRealVGA(io, 4, zdcinfo->field_32);
-	SetRealVGA(io, 5, zdcinfo->field_32); /* field_34 */
-
-	setw(SZDC_FLAGS1_CAPTURING, io + SZDC_FLAGS1);
-
-	outbw(0, io + SZDC_SET_DATA_BUS);
-
-	zdcinfo->available = 1;
-	return 1;
-}
-
 static void get_photo_straight(struct sharpzdc_info *zdcinfo, void *buf)
 {
 	int width = zdcinfo->width;
 	unsigned line_stride = zdcinfo->line_stride;
 	ioaddr_t io = zdcinfo->io;
 	void *cur_buf = buf;
-	void *end_buf = buf + line_stride * zdcinfo->height;
+	void *end_buf = buf + zdcinfo->image_size;
 	if ((width & 1) != 0 ||
 			((line_stride & 3) != 0) ||
 			 (((long)buf & 3) != 0)) {
@@ -529,41 +482,47 @@ static void get_photo_straight(struct sharpzdc_info *zdcinfo, void *buf)
 		}
 	}
 }
-static void get_photo_rotate(struct sharpzdc_info *zdcinfo, void *buf)
-{
-	unsigned short line_stride = zdcinfo->line_stride;
-	void *last_offset = buf + (zdcinfo->width * (sizeof(short)));
+static int sharpzdc_get(struct sharpzdc_info *zdcinfo, char *buf) {
 	ioaddr_t io = zdcinfo->io;
-	unsigned end_offset = line_stride * (zdcinfo->height - 1);
-	void *pos;
-
-
-
-	while (buf < last_offset) {
-		pos = buf + end_offset;
-		if (pos >= buf) {
-			do {
-				unsigned data = inl(io + SZDC_DATA);
-				*(unsigned short *)pos = (unsigned short)data;
-				pos = pos - line_stride;
-				*(unsigned short *)pos = (unsigned short)(data >> 16);
-				pos = pos - line_stride;
-			} while (pos >= buf);
-		}
-		buf += (sizeof(short));
-	}
-}
-
-static int sharpzdc_get(struct sharpzdc_info *zdcinfo, char *buf, size_t size, loff_t *off) {
 	unsigned short dram1, dram2;
-	ioaddr_t io = zdcinfo->io;
-	if (size < zdcinfo->image_size
-		|| zdcinfo->image_size == 0) {
-			return 0;
-		}
-	if (zdcinfo->available == 0)
-		if (sharpzdc_capture(zdcinfo) == 0)
-			return 0;
+	unsigned short reald1, reald2;
+	unsigned short zoomd1, zoomd2;
+	unsigned short temp1, temp2;
+	unsigned short z = 256;
+
+	if (WaitCapture(io) == 0)
+		return 0;
+
+	reald1 = zdcinfo->width;
+	reald2 = zdcinfo->height;
+	zoomd1 = reald1 * z/256;
+	zoomd2 = reald2 * z/256;
+
+	if ((zoomd1 > 640) || (zoomd2 == 0) ||
+		(zoomd2 > 480)) {
+		return 0;
+	}
+	temp1 = 640*256 / zoomd1;
+	temp2 = 480*256 / zoomd2;
+	if (temp1 < temp2)
+		zoomd2 = 480*256 / temp1;
+	else if (temp1 > temp2) {
+		temp1 = temp2;
+		zoomd1 = 640*256 / temp1;
+	}
+
+	SetDRAMCtrl(io, 0, ((zoomd2 >> 3) << 8) | ((zoomd1 >> 4) << 0));
+	SetRealVGA(io, 2, zoomd1);
+	SetRealVGA(io, 4, temp1);
+	SetRealVGA(io, 5, temp1); /* field_34 */
+
+	temp1 = (zoomd1 - reald1) >> 1;
+	temp2 = (zoomd2 - reald2) >> 1;
+
+	setw(SZDC_FLAGS1_CAPTURING, io + SZDC_FLAGS1);
+
+	outbw(0, io + SZDC_SET_DATA_BUS);
+
 	if (WaitCapture(io) == 0)
 		return 0;
 	if (zdcinfo->readmode & SZDC_READMODE_BETTER) {
@@ -574,19 +533,20 @@ static int sharpzdc_get(struct sharpzdc_info *zdcinfo, char *buf, size_t size, l
 	dram1 = 0;
 	dram2 = 0;
 	if (zdcinfo->readmode & SZDC_READMODE_XFLIP) {
-		dram1 |= zdcinfo->field_2A & 0x3f;
-		dram2 |= zdcinfo->field_28 & 0x3f;
+		dram1 |= (zoomd1 - temp1) >> 4;
+		dram2 |= temp1 >> 4;
 		dram2 |= 0x4000;
 	} else {
-		dram1 |= zdcinfo->field_28 & 0x3f;
-		dram2 |= zdcinfo->field_2A & 0x3f;
+		dram1 |= temp1 >> 4;
+		dram2 |= (zoomd1 - temp1) >> 4;
 	}
 	if (zdcinfo->readmode & SZDC_READMODE_YFLIP) {
-		dram1 |= zdcinfo->field_2A & 0x3f00;
+		dram1 |= ((zoomd2 - temp2) >> 3) << 8;
 		dram2 |= 0x8000;
 	} else {
-		dram1 |= zdcinfo->field_28 & 0x3f00;
+		dram1 |= (temp2 >> 3)<< 8;
 	}
+
 	SetDRAMCtrl(io, 1, dram1);
 	SetDRAMCtrl(io, 2, dram2);
 
@@ -601,19 +561,17 @@ static int sharpzdc_get(struct sharpzdc_info *zdcinfo, char *buf, size_t size, l
 	clearw(SZDC_FLAGS1_RESET_PTR, io + SZDC_FLAGS1);
 
 	inl(io + SZDC_DATA); /* XXX: was inw */
-	if (zdcinfo->readmode & SZDC_READMODE_ROTATE)
-		get_photo_rotate(zdcinfo, buf);
-	else
-		get_photo_straight(zdcinfo, buf);
+	get_photo_straight(zdcinfo, buf);
 	if (zdcinfo->readmode & SZDC_READMODE_BETTER) {
 		setw(0x4000, io + SZDC_FLAGS1);
 		clearw(0x4000, io + SZDC_FLAGS2);
 	}
 	outbw(0, io + SZDC_SET_DATA_BUS);
-	zdcinfo->available = 0;
-	*off += (unsigned)zdcinfo->image_size;
 	return zdcinfo->image_size;
 }
+
+#if 0
+
 static int sharpzdc_status(struct sharpzdc_info *zdcinfo, char *buf, size_t size, loff_t *off) {
 	ioaddr_t io = zdcinfo->io;
 	unsigned short data;
@@ -652,160 +610,7 @@ static int sharpzdc_setiris(struct sharpzdc_info *zdcinfo)
 	outbw(0, io + SZDC_SET_DATA_BUS);
 	return 1;
 }
-static int skip_spaces(const char *s) {
-	const char *t = s;
-	while (((*t)-1) < (unsigned)'\x20')
-		t++;
-	return t - s;
-}
 
-static int str_to_value(const char *str, int *resptr)
-{
-	int res;
-	const char *ptr = str;
-	int is_hex = 0;
-	int valid = 0;
-	char c;
-	res = 0;
-	if (*ptr == '0') {
-		if (ptr[1] == 'x' || ptr[1] == 'X') {
-			ptr += 2;
-			is_hex = 1;
-		}
-	}
-
-	while (*ptr) {
-		c = *ptr;
-		if (c >= '0' && c <= '9') {
-			c = (c - '0') & 0xff;
-		} else if (is_hex) {
-			if (c >= 'a' && c <= 'f')
-				c = c + 10 - 'a';
-			else if (c >= 'A' && c <= 'F')
-				c = c + 10 - 'A';
-			else
-				break;
-		} else
-			break;
-		if (is_hex)
-			res = res * 16 + c;
-		else
-			res = res * 10 + c;
-
-		valid = 1;
-		ptr ++;
-	}
-
-	if (!valid)
-		return 0;
-
-	if (resptr != NULL)
-		*resptr = res;
-
-	return ptr - str;
-}
-static int get_param_value(const char *str, char c, unsigned *resptr)
-{
-	int ret;
-	const char *s = str + skip_spaces(str);
-	if (c != '\0') {
-		if (c != *s)
-			return 0;
-
-		s ++;
-
-		s += skip_spaces(s);
-	}
-
-	ret = str_to_value(s, resptr);
-	if (ret == 0)
-		return 0;
-	s += ret;
-	return s - str;
-}
-static int param_viewsize(struct sharpzdc_info *zdcinfo, const char *data, int rotate)
-{
-	int val;
-	int ret;
-	unsigned short w, h, z, l;
-	unsigned short reald1, reald2;
-	unsigned short zoomd1, zoomd2;
-	unsigned short temp1, temp2;
-	ret = get_param_value(data, '=', &val);
-	if (ret == 0)
-		return 0;
-	data += ret;
-
-	w = val;
-	ret = get_param_value(data, ',', &val);
-	if (ret == 0)
-		return 0;
-	data += ret;
-
-	h = val;
-	val = 1;
-	ret = get_param_value(data, ',', &val);
-	z = val;
-	val = 0;
-	if (ret) {
-		data += ret;
-		ret = get_param_value(data, ',', &val);
-	}
-	l = val;
-
-	if (rotate) {
-		reald1 = h;
-		reald2 = w;
-	} else {
-		reald1 = w;
-		reald2 = h;
-	}
-
-	zoomd1 = reald1 * z/256;
-	zoomd2 = reald2 * z/256;
-	if ((zoomd1 > 640) || (zoomd2 == 0) ||
-		(zoomd2 > 480)) {
-		return 0;
-	}
-	temp1 = 640*256 / zoomd1;
-	temp2 = 480*256 / zoomd2;
-	if (temp1 < temp2)
-		zoomd2 = 480*256 / temp1;
-	else if (temp1 > temp2) {
-		temp1 = temp2;
-		zoomd1 = 640*256 / temp1;
-	}
-
-	zdcinfo->available = 0;
-	if (rotate)
-		zdcinfo->readmode |= SZDC_READMODE_ROTATE;
-	else
-		zdcinfo->readmode &= ~SZDC_READMODE_ROTATE;
-
-	if ((unsigned)l < (unsigned)(w*2)) {
-		l = w * 2;
-	}
-	zdcinfo->image_size = l * h;
-	zdcinfo->width = w;
-	zdcinfo->height = h;
-	zdcinfo->line_stride = l;
-//	zdcinfo->field_2C = 4;
-//	zdcinfo->field_2E = 0x20;
-	zdcinfo->field_30 = zoomd1;
-	zdcinfo->field_32 = temp1;
-//	zdcinfo->field_34 = temp1;
-
-	zdcinfo->field_26 = ((zoomd2 >> 3) << 8) | ((zoomd1 >> 4) << 0);
-
-	temp1 = (zoomd1 - reald1) >> 1;
-	temp2 = (zoomd2 - reald2) >> 1;
-	zdcinfo->field_28 = ((temp2 >> 3) << 8) | (temp1 >> 4);
-
-	temp1 = (zoomd1 - temp1);
-	temp2 = (zoomd2 - temp2);
-	zdcinfo->field_2A =  ((temp2 >> 3 )<< 8) | (temp1 >> 4);
-	return 1;
-}
 static int param_modeset(struct sharpzdc_info *zdcinfo, const char *data)
 {
 	ioaddr_t io = zdcinfo->io;
@@ -845,144 +650,11 @@ static int param_irisset(struct sharpzdc_info *zdcinfo, const char *data)
 
 	return sharpzdc_setiris(zdcinfo);
 }
-static int sharpzdc_param_part(struct sharpzdc_info *zdcinfo, const char *param) {
-	char c;
-	param += skip_spaces(param);
-	c = *param;
-	switch (c) {
-		case 'B':
-			return sharpzdc_shutterclear(zdcinfo);
-		case 'C':
-			return sharpzdc_capture(zdcinfo);
-		case 'I':
-			return param_irisset(zdcinfo, param + 1);
-		case 'M':
-			return param_modeset(zdcinfo, param + 1);
-		case 'R':
-			return param_viewsize(zdcinfo, param + 1, 1);
-		case 'S':
-			return param_viewsize(zdcinfo, param + 1, 0);
-		default:
-			return 0;
-		case '#':
-		case '\0':
-			return 1;
-	}
-}
-static int get_param_line(char *buf, int size, const char *param, int len)
-{
-	char c;
-	int i;
-	size --;
-	for (i = 0; ; i++, param ++) {
-		if (i >= len)
-			break;
-
-		c = *param;
-		if (!c)
-			break;
-
-		if (i < size)
-			*(buf++) = c;
-
-		if (*param == '\n') {
-			if (i < size) {
-				buf --;
-			}
-			i++;
-			break;
-		}
-	}
-	*buf = '\0';
-	return i;
-}
-static ssize_t sharpzdc_param(struct sharpzdc_info *zdcinfo, const char *buf, size_t size, loff_t *off)
-{
-	const char *ptr = buf;
-	int left = size;
-	int tlen = 0;
-	char temp[160];
-	while (left > 0) {
-		if (!*ptr)
-			break;
-		tlen = get_param_line(temp, sizeof(temp), ptr, left);
-		if (tlen == 0)
-			continue;
-
-		if (sharpzdc_param_part(zdcinfo, temp) == 0)
-			break;
-		ptr += tlen;
-		left -= tlen;
-	}
-	*off += size;
-	return size;
-}
-static int sharpzdc_old_open(struct inode *inode, struct file *file)
-{
-	struct video_device *vdev = video_devdata(file);
-	struct sharpzdc_info *zdcinfo = video_get_drvdata(vdev);
-//	if (zdcinfo->hw_status < 0) {
-//		printk(KERN_WARNING "sharpzdc_cs: Device Dead!\n");
-//		return -EBUSY;
-//	}
-
-//	if (!(dev->state & DEV_SUSPEND)) {
-//		printk(KERN_WARNING "sharpzdc_cs: Device not ready!\n");
-//		return -EBUSY;
-//	}
-
-//	zdcinfo->hw_status = 1;
-
-//	CardServices(ResumeCard, dev->handle);
-
-	zdcinfo->io = zdcinfo->p_dev->io.BasePort1;
-
-	return sharpzdc_start(zdcinfo);
-}
-
-static int sharpzdc_close(struct inode *inode, struct file *file)
-{
-	struct video_device *vdev = video_devdata(file);
-	struct sharpzdc_info *zdcinfo = video_get_drvdata(vdev);
-//	if (zdcinfo->hw_status > 0) {
-		sharpzdc_stop(zdcinfo);
-//		zdcinfo->hw_status = 0;
-////		CardServices(SuspendCard, dev->handle);
-//	}
-
-	return 0;
-}
-
-static int sharpzdc_ioctl(struct inode *inode, struct file *file,
-		unsigned int cmd, unsigned long arg)
-{
-	return -EINVAL;
-}
-
-static ssize_t sharpzdc_old_read(struct file *file, char *buf, size_t size, loff_t *off) {
-	struct video_device *vdev = video_devdata(file);
-	struct sharpzdc_info *zdcinfo = video_get_drvdata(vdev);
-	if ((zdcinfo->readmode & SZDC_READMODE_STATUS))
-		return sharpzdc_status(zdcinfo, buf, size, off);
-
-//	if (zdcinfo->hw_status < 0)
-//		return zdcinfo->readmode & 1;
-
-	return sharpzdc_get(zdcinfo, buf, size, off);
-}
-static ssize_t sharpzdc_write(struct file *file, const char *buf, size_t size, loff_t *off) {
-	struct video_device *vdev = video_devdata(file);
-	struct sharpzdc_info *zdcinfo = video_get_drvdata(vdev);
-	return sharpzdc_param(zdcinfo, buf, size, off);
-}
-
 #endif
+
 
 static void sharpzdc_fillbuff(struct sharpzdc_info* info, struct videobuf_buffer *vb)
 {
-	int h , pos = 0;
-	int hmax  = vb->height;
-	int wmax  = vb->width;
 	void *vbuf = videobuf_to_vmalloc(vb);
 
 	pr_debug("%s\n", __func__);
@@ -990,13 +662,10 @@ static void sharpzdc_fillbuff(struct sharpzdc_info* info, struct videobuf_buffer
 	if (!vbuf)
 		return;
 
-	for (h = 0; h < hmax; h++) {
-		memset(vbuf + pos, 0xcc, wmax * 2);
-		pos += wmax*2;
-	}
+	sharpzdc_get(info, vbuf);
 
 	/* Advice that buffer was filled */
-	vb->field_count += 2; /* two fields */
+	vb->field_count += 1; /* two fields */
 	do_gettimeofday(&vb->ts);
 	vb->state = VIDEOBUF_DONE;
 }
@@ -1044,7 +713,9 @@ int sharpzdc_kthread(void *data)
 		if (kthread_should_stop())
 			break;
 
-		wait_event_freezable(info->wq, !list_empty(&info->queued) || kthread_should_stop());
+		try_to_freeze();
+		schedule_timeout_interruptible(1000 * 30 / 1001);
+//		wait_event_freezable(info->wq, !list_empty(&info->queued) || kthread_should_stop());
 
 		if (kthread_should_stop())
 			break;
@@ -1074,7 +745,7 @@ static int sharpzdc_buf_setup(struct videobuf_queue *q,
 	struct sharpzdc_info  *info = q->priv_data;
 	pr_debug("%s\n", __func__);
 
-	*size = info->width * info->height*2;
+	*size = info->image_size;
 
 	if (*count == 0)
 		*count = 32;
@@ -1334,9 +1005,11 @@ static int sharpzdc_try_fmt_vid_cap(struct file *file, void *private_data,
 		f->fmt.pix.height = 32;
 	if (f->fmt.pix.height > 480)
 		f->fmt.pix.height = 480;
+	f->fmt.pix.width = (f->fmt.pix.width + 1)&~1;
 
 	if (f->fmt.pix.bytesperline < (f->fmt.pix.width * 2))
 		f->fmt.pix.bytesperline = f->fmt.pix.width * 2;
+	f->fmt.pix.bytesperline = (f->fmt.pix.bytesperline + 3)&~3;
 
 	if (f->fmt.pix.sizeimage < (f->fmt.pix.bytesperline * f->fmt.pix.height))
 		f->fmt.pix.sizeimage = f->fmt.pix.bytesperline * f->fmt.pix.height;
@@ -1352,7 +1025,7 @@ static int sharpzdc_s_fmt_vid_cap(struct file *file, void *private_data,
 		struct v4l2_format *f)
 {
 	struct sharpzdc_info *info = private_data;
-	int ret;
+	int ret = 0;
 
 	pr_debug("%s\n", __func__);
 	ret = sharpzdc_try_fmt_vid_cap(file, private_data, f);
@@ -1360,7 +1033,11 @@ static int sharpzdc_s_fmt_vid_cap(struct file *file, void *private_data,
 		return ret;
 
 	mutex_lock(&info->vb_vidq.vb_lock);
-	mutex_unlock(&info->vb_vidq.vb_lock);
+	if (videobuf_queue_is_busy(&info->vb_vidq)) {
+		pr_debug("%s queue busy\n", __func__);
+		ret = -EBUSY;
+		goto out;
+	}
 
 	// FIXME: width, height, bytesperline, sizeimage limitation wrt rotating and zoom.
 	info->width = f->fmt.pix.width;
@@ -1368,7 +1045,9 @@ static int sharpzdc_s_fmt_vid_cap(struct file *file, void *private_data,
 	info->line_stride = f->fmt.pix.bytesperline;
 	info->image_size = f->fmt.pix.sizeimage;
 
-	return 0;
+out:
+	mutex_unlock(&info->vb_vidq.vb_lock);
+	return ret;
 }
 
 static int sharpzdc_reqbufs(struct file *file, void *private_data,
@@ -1622,6 +1301,8 @@ static int sharpzdc_probe(struct pcmcia_device *link)
 	if (ret)
 		goto err_config;
 
+	info->io = link->io.BasePort1;
+
 	info->vdev = video_device_alloc();
 	if (info->vdev == NULL) {
 		ret = -ENOMEM;
@@ -1643,6 +1324,10 @@ static int sharpzdc_probe(struct pcmcia_device *link)
 	info->vdev->current_norm = V4L2_STD_UNKNOWN;
 	strncpy(info->vdev->name, "sharpzdc", sizeof(info->vdev->name));
 
+	ret = sharpzdc_start(info);
+	if (ret)
+		goto err_start;
+
 	info->thread = kthread_run(sharpzdc_kthread, info,
 		      "sharpzdc: %s", dev_name(&link->dev));
 	if (IS_ERR(info->thread)) {
@@ -1658,6 +1343,8 @@ static int sharpzdc_probe(struct pcmcia_device *link)
 err_register:
 	kthread_stop(info->thread);
 err_thread:
+	sharpzdc_stop(info);
+err_start:
 	if (info->vdev) {
 		sharpzdc_vdev_release(info->vdev);
 		info->vdev = NULL;
@@ -1677,6 +1364,8 @@ static void sharpzdc_remove(struct pcmcia_device *link)
 	video_unregister_device(info->vdev);
 
 	kthread_stop(info->thread);
+
+	sharpzdc_stop(info);
 
 	pcmcia_disable_device(link);
 	kref_put(&info->ref, sharpzdc_info_release);
