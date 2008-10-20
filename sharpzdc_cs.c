@@ -7,6 +7,9 @@
 #include <linux/spinlock.h>
 #include <linux/mutex.h>
 #include <linux/interrupt.h>
+#include <linux/kthread.h>
+#include <linux/wait.h>
+#include <linux/freezer.h>
 #include <linux/firmware.h>
 
 #include <media/v4l2-dev.h>
@@ -76,6 +79,9 @@ struct sharpzdc_info {
 	struct videobuf_queue	vb_vidq;
 	struct list_head	queued;
 	spinlock_t		lock;
+
+	struct task_struct	*thread;
+	wait_queue_head_t	wq;
 
 //	int	field_00;
 //	int	field_04;
@@ -999,20 +1005,16 @@ static void sharpzdc_thread_tick(struct sharpzdc_info *info)
 {
 	struct videobuf_buffer *vb;
 
-//	unsigned long flags = 0;
+	unsigned long flags = 0;
 
 	pr_debug("%s\n", __func__);
 
-//	spin_lock_irqsave(&info->lock, flags);
+	spin_lock_irqsave(&info->lock, flags);
 	if (list_empty(&info->queued))
 		goto unlock;
 
 	vb = list_entry(info->queued.next,
 			 struct videobuf_buffer, queue);
-
-	/* Nobody is waiting on this buffer, return */
-//	if (!waitqueue_active(&vb->done))
-//		goto unlock;
 
 	list_del(&vb->queue);
 
@@ -1023,10 +1025,38 @@ static void sharpzdc_thread_tick(struct sharpzdc_info *info)
 
 	wake_up(&vb->done);
 unlock:
-//	spin_unlock_irqrestore(&info->lock, flags);
+	spin_unlock_irqrestore(&info->lock, flags);
 	return;
 }
 
+int sharpzdc_kthread(void *data)
+{
+	struct sharpzdc_info *info = data;
+	DECLARE_WAITQUEUE(wait, current);
+
+	pr_debug("%s\n", __func__);
+//	set_user_nice(current, -20);
+
+	set_freezable();
+	add_wait_queue(&info->wq, &wait);
+
+	for(;;) {
+		if (kthread_should_stop())
+			break;
+
+		wait_event_freezable(info->wq, !list_empty(&info->queued) || kthread_should_stop());
+
+		if (kthread_should_stop())
+			break;
+		sharpzdc_thread_tick(info);
+	}
+
+
+	remove_wait_queue(&info->wq, &wait);
+	pr_debug("%s exiting\n", __func__);
+
+	return 0;
+}
 
 static void sharpzdc_buf_release(struct videobuf_queue *q,
 		struct videobuf_buffer *vb)
@@ -1100,8 +1130,9 @@ static void sharpzdc_buf_queue(struct videobuf_queue *q,
 	pr_debug("%s\n", __func__);
 
 	vb->state = VIDEOBUF_QUEUED;
+
 	list_add_tail(&vb->queue, &info->queued);
-	sharpzdc_thread_tick(info);
+	wake_up(&info->wq);
 }
 
 static struct videobuf_queue_ops sharpzdc_video_qops = {
@@ -1151,8 +1182,6 @@ sharpzdc_poll(struct file *file, struct poll_table_struct *wait)
 	pr_debug("%s\n", __func__);
 
 	ret = videobuf_poll_stream(file, &info->vb_vidq, wait);
-
-	sharpzdc_thread_tick(info);
 
 	return ret;
 }
@@ -1579,6 +1608,7 @@ static int sharpzdc_probe(struct pcmcia_device *link)
 	kref_init(&info->ref);
 	spin_lock_init(&info->lock);
 	INIT_LIST_HEAD(&info->queued);
+	init_waitqueue_head(&info->wq);
 
 	info->p_dev = link;
 	link->priv = info;
@@ -1590,12 +1620,12 @@ static int sharpzdc_probe(struct pcmcia_device *link)
 
 	ret = sharpzdc_config(link);
 	if (ret)
-		goto err;
+		goto err_config;
 
 	info->vdev = video_device_alloc();
 	if (info->vdev == NULL) {
 		ret = -ENOMEM;
-		goto err2;
+		goto err_vdev;
 	}
 	kref_get(&info->ref);
 	video_set_drvdata(info->vdev, info);
@@ -1613,19 +1643,28 @@ static int sharpzdc_probe(struct pcmcia_device *link)
 	info->vdev->current_norm = V4L2_STD_UNKNOWN;
 	strncpy(info->vdev->name, "sharpzdc", sizeof(info->vdev->name));
 
+	info->thread = kthread_run(sharpzdc_kthread, info,
+		      "sharpzdc: %s", dev_name(&link->dev));
+	if (IS_ERR(info->thread)) {
+		ret = PTR_ERR(info->thread);
+		goto err_thread;
+	}
+
 	ret = video_register_device(info->vdev, VFL_TYPE_GRABBER, -1);
 	if (ret < 0)
-		goto err3;
+		goto err_register;
 
 	return 0;
-err3:
+err_register:
+	kthread_stop(info->thread);
+err_thread:
 	if (info->vdev) {
 		sharpzdc_vdev_release(info->vdev);
 		info->vdev = NULL;
 	}
-err2:
+err_vdev:
 	pcmcia_disable_device(link);
-err:
+err_config:
 	kref_put(&info->ref, sharpzdc_info_release);
 	return ret;
 }
@@ -1636,6 +1675,8 @@ static void sharpzdc_remove(struct pcmcia_device *link)
 	pr_debug("%s\n", __func__);
 
 	video_unregister_device(info->vdev);
+
+	kthread_stop(info->thread);
 
 	pcmcia_disable_device(link);
 	kref_put(&info->ref, sharpzdc_info_release);
