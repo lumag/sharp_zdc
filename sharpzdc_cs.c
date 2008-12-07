@@ -216,35 +216,6 @@ static unsigned short eep_data_read(ioaddr_t io, unsigned char addr)
 	return result;
 }
 
-static void InitTable_CEAG06(ioaddr_t io) {
-	int i;
-
-	for (i = 0; i < 0x1F; i++) {
-		SetCamCoreData(io, 0x70, i);
-		SetCamCoreData(io, 0x72, eep_data_read(io, i * 2 + 0xC0));
-		SetCamCoreData(io, 0x74, eep_data_read(io, i * 2 + 0xC1));
-	}
-
-	for (i = 0; i < 0x16; i+= 2) {
-		unsigned short r = eep_data_read(io, i / 2 + 0x90);
-		SetCamCoreData(io, 0x78, i);
-		SetCamCoreData(io, 0x7A, r & 0xff);
-		SetCamCoreData(io, 0x78, i + 1);
-		SetCamCoreData(io, 0x7A, r >> 8);
-	}
-
-	for (i = 0; i < 0x10; i += 2) {
-		unsigned short r = eep_data_read(io, i / 2 + 0xA0);
-		SetCamCoreData(io, 0x78, i + 0x100);
-		SetCamCoreData(io, 0x7A, r & 0xff);
-		SetCamCoreData(io, 0x78, i + 0x101);
-		SetCamCoreData(io, 0x7A, r >> 8);
-	}
-
-	SetCamCoreData(io, 0x78, 0x110);
-	SetCamCoreData(io, 0x7A, eep_data_read(io, 0xA8) & 0xff);
-	SetCamCoreData(io, 0x7C, 0);
-}
 static int WaitCapture(ioaddr_t io) {
 	int cnt;
 
@@ -352,7 +323,31 @@ static int sharpzdc_start(struct sharpzdc_info *zdcinfo) {
 
 	setw(0x8000, io + SZDC_FLAGS1);
 
-	InitTable_CEAG06(io);
+	for (i = 0; i < 0x1F; i++) {
+		SetCamCoreData(io, 0x70, i);
+		SetCamCoreData(io, 0x72, eep_data_read(io, i * 2 + 0xC0));
+		SetCamCoreData(io, 0x74, eep_data_read(io, i * 2 + 0xC1));
+	}
+
+	for (i = 0; i < 0x16; i+= 2) {
+		unsigned short r = eep_data_read(io, i / 2 + 0x90);
+		SetCamCoreData(io, 0x78, i);
+		SetCamCoreData(io, 0x7A, r & 0xff);
+		SetCamCoreData(io, 0x78, i + 1);
+		SetCamCoreData(io, 0x7A, r >> 8);
+	}
+
+	for (i = 0; i < 0x10; i += 2) {
+		unsigned short r = eep_data_read(io, i / 2 + 0xA0);
+		SetCamCoreData(io, 0x78, i + 0x100);
+		SetCamCoreData(io, 0x7A, r & 0xff);
+		SetCamCoreData(io, 0x78, i + 0x101);
+		SetCamCoreData(io, 0x7A, r >> 8);
+	}
+
+	SetCamCoreData(io, 0x78, 0x110);
+	SetCamCoreData(io, 0x7A, eep_data_read(io, 0xA8) & 0xff);
+	SetCamCoreData(io, 0x7C, 0);
 
 	setw(0x0200, io + SZDC_FLAGS1);
 	setw(0x0c00, io + SZDC_FLAGS1);
