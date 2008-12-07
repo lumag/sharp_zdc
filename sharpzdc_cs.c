@@ -424,31 +424,19 @@ static void get_photo_straight(struct sharpzdc_info *zdcinfo, void *buf)
 	ioaddr_t io = zdcinfo->io;
 	void *cur_buf = buf;
 	void *end_buf = buf + zdcinfo->image_size;
-	if ((width & 1) != 0 ||
-			((line_stride & 3) != 0) ||
-			 (((long)buf & 3) != 0)) {
-		while (cur_buf < end_buf) {
-			unsigned short *pos = cur_buf;
-			unsigned short *end = cur_buf + (width << 1);
-			while (pos < end) {
-				unsigned data = inl(io + SZDC_DATA);
-				*(pos++) = data;
-				data >>= 16;
-				*(pos++) = data;
-			}
-			cur_buf += line_stride;
+
+	BUG_ON(width & 1);
+	BUG_ON(line_stride & 3);
+	BUG_ON(((long)buf) & 3);
+
+	while (cur_buf < end_buf) {
+		unsigned *pos = cur_buf;
+		unsigned *end = cur_buf + (width << 1);
+		while (pos < end) {
+			unsigned data = inl(io + SZDC_DATA);
+			*(pos++) = data;
 		}
-	} else {
-		width >>= 1;
-		while (cur_buf < end_buf) {
-			unsigned *pos = cur_buf;
-			unsigned *end = cur_buf + (width << 2);
-			while (pos < end) {
-				unsigned data = inl(io + SZDC_DATA);
-				*(pos++) = data;
-			}
-			cur_buf += line_stride;
-		}
+		cur_buf += line_stride;
 	}
 }
 
@@ -952,11 +940,13 @@ static int sharpzdc_try_fmt_vid_cap(struct file *file, void *private_data,
 		f->fmt.pix.width = 32;
 	if (f->fmt.pix.width > 640)
 		f->fmt.pix.width = 640;
+	f->fmt.pix.width = (f->fmt.pix.width + 1) &~1;
+
 	if (f->fmt.pix.height < 32)
 		f->fmt.pix.height = 32;
 	if (f->fmt.pix.height > 480)
 		f->fmt.pix.height = 480;
-	f->fmt.pix.width = (f->fmt.pix.width + 1)&~1;
+	f->fmt.pix.height = (f->fmt.pix.height + 1)&~1;
 
 	if (f->fmt.pix.bytesperline < (f->fmt.pix.width * 2))
 		f->fmt.pix.bytesperline = f->fmt.pix.width * 2;
