@@ -141,7 +141,7 @@ static const unsigned short sharpzdc_camcore[] = {
 	0x60,	0x1285,
 };
 
-static const unsigned char sharpzdc_gamma[] = {
+static const unsigned short sharpzdc_gamma[] = {
 	0x00, 0x03, 0x05, 0x07, 0x09, 0x0a, 0x0c, 0x0d,
 	0x0f, 0x10, 0x11, 0x12, 0x13, 0x15, 0x16, 0x17,
 	0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
@@ -271,28 +271,6 @@ static void SendDataToMCon(ioaddr_t io, unsigned short addr, unsigned short data
 
 	setw(SZDC_MCON_RO, io + SZDC_MCON);
 }
-static int SetGammaData(ioaddr_t io, const void*gamma, unsigned char elemsize)
-{
-	if (elemsize > 2) {
-		return 0;
-	}
-	SetCamCoreData(io, 0x44, 1);
-	if (elemsize == 1) {
-		int i;
-		for (i = 0; i <= 0x3f; i++) {
-			SetCamCoreData(io, 0x40, i);
-			SetCamCoreData(io, 0x42, ((unsigned char*)gamma)[i]);
-		}
-	} else {
-		int i;
-		for (i = 0; i <= 0x3f; i++) {
-			SetCamCoreData(io, 0x40, i);
-			SetCamCoreData(io, 0x42, ((unsigned short*)gamma)[i]);
-		}
-	}
-	SetCamCoreData(io, 0x44, 0);
-	return 1;
-}
 
 static int sharpzdc_start(struct sharpzdc_info *zdcinfo) {
 	ioaddr_t io = zdcinfo->io;
@@ -389,7 +367,14 @@ static int sharpzdc_start(struct sharpzdc_info *zdcinfo) {
 
 		DisableSendDataToMCon(io, 0);
 	}
-	SetGammaData(io, sharpzdc_gamma, sizeof(*sharpzdc_gamma));
+
+	SetCamCoreData(io, 0x44, 1);
+	for (i = 0; i <= 0x3f; i++) {
+		SetCamCoreData(io, 0x40, i);
+		SetCamCoreData(io, 0x42, sharpzdc_gamma[i]);
+	}
+	SetCamCoreData(io, 0x44, 0);
+
 	for (i = 0; i < sizeof(sharpzdc_camcore) / sizeof(*sharpzdc_camcore); i += 2) {
 		SetCamCoreData(io, sharpzdc_camcore[i], sharpzdc_camcore[i+1]);
 	}
