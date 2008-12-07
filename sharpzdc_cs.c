@@ -623,22 +623,6 @@ static int param_modeset(struct sharpzdc_info *zdcinfo, const char *data)
 	}
 	return 1;
 }
-static int param_irisset(struct sharpzdc_info *zdcinfo, const char *data)
-{
-	int val;
-	int ret = get_param_value(data, '=', &val);
-	if (ret == 0)
-		return 0;
-	if (val < 0) {
-		val = 0;
-	} else if (val > 0xff) {
-		val = 0xff;
-	}
-
-	zdcinfo->iris = (unsigned short) val;
-
-	return sharpzdc_setiris(zdcinfo);
-}
 #endif
 
 
