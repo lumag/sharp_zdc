@@ -23,32 +23,32 @@
 #include <pcmcia/ds.h>
 
 #define SZDC_FLAGS1		0x0	/* bw */
-#define SZDC_FLAGS1_CAPTURING	0x0001
-#define SZDC_FLAGS1_RESET_PTR	0x0002
-#define SZDC_FLAGS1_REVERSE_DETECTED 0x0004
-#define SZDC_FLAGS1_SHUTTER	0x0008
+#define SZDC_FLAGS1_CAPTURING	BIT(0)
+#define SZDC_FLAGS1_RESET_PTR	BIT(1)
+#define SZDC_FLAGS1_REVERSE_DETECTED BIT(2)
+#define SZDC_FLAGS1_SHUTTER	BIT(3)
 
 #define SZDC_FLAGS2		0x2	/* bw */
-#define SZDC_FLAGS2_XFLIP	0x0008
+#define SZDC_FLAGS2_XFLIP	BIT(3)
 
 #define SZDC_DATA		0x4	/* l */
 
 #define SZDC_SET_DATA_BUS	0x6	/* bw */
 
 #define SZDC_MCON		0x8	/* bw */
-#define SZDC_MCON_RO		0x0001 /* at least it seems so */
-#define SZDC_MCON_STROBE	0x0002
-#define SZDC_MCON_DISABLED	0x0008
-#define SZDC_MCON_ENABLED2	0x0010 /* seems to depend on !MCON_DISABLED */
-#define SZDC_MCON_READY		0x0020
-#define SZDC_MCON_RESET		0x0040 /* toggled to start program */
+#define SZDC_MCON_RO		BIT(0) /* at least it seems so */
+#define SZDC_MCON_STROBE	BIT(1)
+#define SZDC_MCON_DISABLED	BIT(3)
+#define SZDC_MCON_ENABLED2	BIT(4) /* seems to depend on !MCON_DISABLED */
+#define SZDC_MCON_READY		BIT(5)
+#define SZDC_MCON_RESET		BIT(6) /* toggled to start program */
 
 #define SZDC_EEPROM		0xA	/* b */
-#define SZDC_EEPROM_ENABLE	1 << 7
-#define SZDC_EEPROM_CLOCK	1 << 3
-#define SZDC_EEPROM_CS		1 << 2
-#define SZDC_EEPROM_DATA_IN	1 << 1
-#define SZDC_EEPROM_DATA_OUT	1 << 0
+#define SZDC_EEPROM_ENABLE	BIT(7)
+#define SZDC_EEPROM_CLOCK	BIT(3)
+#define SZDC_EEPROM_CS		BIT(2)
+#define SZDC_EEPROM_DATA_IN	BIT(1)
+#define SZDC_EEPROM_DATA_OUT	BIT(0)
 
 #define SZDC_BUS_SELECT		0xB	/* b */
 #define SZDC_BUS_SELECT_DRAM	0
