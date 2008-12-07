@@ -362,13 +362,13 @@ static int sharpzdc_start(struct sharpzdc_info *zdcinfo) {
 
 	SetCamCoreData(io, 0x44, 1);
 
-	SetDRAMCtrl(io, 0, 0x3C28);
+	SetDRAMCtrl(io, 0, 0x3C28); /* 640 x 480 */
 	SetDRAMCtrl(io, 1, 0);
 	SetDRAMCtrl(io, 2, 0x28);
 
 	SetRealVGA(io, 0, 4);
 	SetRealVGA(io, 1, 0x20);
-	SetRealVGA(io, 2, 0x280);
+	SetRealVGA(io, 2, 0x280); /* 640 */
 	SetRealVGA(io, 4, 0x100);
 	SetRealVGA(io, 5, 0x100);
 
@@ -466,12 +466,15 @@ static void get_photo_straight(struct sharpzdc_info *zdcinfo, void *buf)
 		}
 	}
 }
+
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
 static int sharpzdc_get(struct sharpzdc_info *zdcinfo, char *buf) {
 	ioaddr_t io = zdcinfo->io;
 	unsigned short dram1, dram2;
 	unsigned short reald1, reald2;
 	unsigned short zoomd1, zoomd2;
 	unsigned short temp1, temp2;
+	unsigned short raw_zoom;
 	unsigned short z = 256;
 
 	if (WaitCapture(io) == 0)
@@ -486,19 +489,14 @@ static int sharpzdc_get(struct sharpzdc_info *zdcinfo, char *buf) {
 		(zoomd2 > 480)) {
 		return 0;
 	}
-	temp1 = 640*256 / zoomd1;
-	temp2 = 480*256 / zoomd2;
-	if (temp1 < temp2)
-		zoomd2 = 480*256 / temp1;
-	else if (temp1 > temp2) {
-		temp1 = temp2;
-		zoomd1 = 640*256 / temp1;
-	}
+	raw_zoom = MIN(640*256 / zoomd1, 480*256 / zoomd2);
+	zoomd1 = 640*256 / raw_zoom;
+	zoomd2 = 480*256 / raw_zoom;
 
 	SetDRAMCtrl(io, 0, ((zoomd2 >> 3) << 8) | ((zoomd1 >> 4) << 0));
 	SetRealVGA(io, 2, zoomd1);
-	SetRealVGA(io, 4, temp1);
-	SetRealVGA(io, 5, temp1); /* field_34 */
+	SetRealVGA(io, 4, raw_zoom);
+	SetRealVGA(io, 5, raw_zoom); /* field_34 */
 
 	temp1 = (zoomd1 - reald1) >> 1;
 	temp2 = (zoomd2 - reald2) >> 1;
