@@ -322,28 +322,6 @@ static int SetGammaData(ioaddr_t io, const void*gamma, unsigned char elemsize)
 	SetCamCoreData(io, 0x44, 0);
 	return 1;
 }
-static void set_camera_param(ioaddr_t io) {
-	int ret;
-	int i;
-	const unsigned short *d;
-	int lim;
-	ret = EnableSendDataToMCon(io);
-	if (ret != 0) {
-		lim = sizeof(sharpzdc_params) / sizeof(*sharpzdc_params);
-		d = sharpzdc_params;
-		for (i = 0; i < lim; i += 2) {
-			SendDataToMCon(io, d[i], d[i+1]);
-		}
-
-		DisableSendDataToMCon(io, 0);
-	}
-	SetGammaData(io, sharpzdc_gamma, sizeof(*sharpzdc_gamma));
-	lim = sizeof(sharpzdc_camcore) / sizeof(*sharpzdc_camcore);
-	d = sharpzdc_camcore;
-	for (i = 0; i < lim; i += 2) {
-		SetCamCoreData(io, d[i], d[i+1]);
-	}
-}
 
 static int sharpzdc_start(struct sharpzdc_info *zdcinfo) {
 	ioaddr_t io = zdcinfo->io;
@@ -408,7 +386,18 @@ static int sharpzdc_start(struct sharpzdc_info *zdcinfo) {
 	clearw(0x4000, io + SZDC_FLAGS1);
 	setw(0x4000, io + SZDC_FLAGS2);
 
-	set_camera_param(io);
+	ret = EnableSendDataToMCon(io);
+	if (ret != 0) {
+		for (i = 0; i < sizeof(sharpzdc_params) / sizeof(*sharpzdc_params); i += 2) {
+			SendDataToMCon(io, sharpzdc_params[i], sharpzdc_params[i+1]);
+		}
+
+		DisableSendDataToMCon(io, 0);
+	}
+	SetGammaData(io, sharpzdc_gamma, sizeof(*sharpzdc_gamma));
+	for (i = 0; i < sizeof(sharpzdc_camcore) / sizeof(*sharpzdc_camcore); i += 2) {
+		SetCamCoreData(io, sharpzdc_camcore[i], sharpzdc_camcore[i+1]);
+	}
 
 	ret = EnableSendDataToMCon(io);
 	if (ret == 0) {
