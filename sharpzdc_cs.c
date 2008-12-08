@@ -83,7 +83,7 @@ struct sharpzdc_info {
 	struct task_struct	*thread;
 	wait_queue_head_t	wq;
 
-	ioaddr_t io;
+	void __iomem		*io;
 	int	readmode;
 	int	image_size;
 	unsigned short	width;
@@ -95,17 +95,17 @@ struct sharpzdc_info {
 // inl is usual
 /*
 #undef outb
-static inline void outb(u8 data, ioaddr_t io)
+static inline void iowrite8(u8 data, void __iomem *io)
 {
 	*(volatile u8*)io = data;
 }
 */
-#define inbw(io)  (inb(io) | (inb((io) + 1) << 8))
+#define inbw(io)  (ioread8(io) | (ioread8((io) + 1) << 8))
 #define outbw(data, io) \
-	inb(io);		  \
-	outb(data, io);   \
-	inb(io+1);		\
-	outb(data >> 8, io+1);
+	ioread8(io);		  \
+	iowrite8(data, io);   \
+	ioread8(io+1);		\
+	iowrite8(data >> 8, io+1);
 #define setw(bit, io)   \
 	{				\
 		unsigned short d;\
@@ -153,42 +153,42 @@ static const unsigned short sharpzdc_gamma[] = {
 };
 
 
-static void SetCamCoreData(ioaddr_t io, unsigned short addr, unsigned short data) {
-	outb(SZDC_BUS_SELECT_CORE, io + SZDC_BUS_SELECT);
+static void SetCamCoreData(void __iomem *io, unsigned short addr, unsigned short data) {
+	iowrite8(SZDC_BUS_SELECT_CORE, io + SZDC_BUS_SELECT);
 	outbw(addr, io + SZDC_BUS_ADDR);
 	outbw(data, io + SZDC_BUS_DATA);
 }
-static void SetDRAMCtrl(ioaddr_t io, unsigned short addr, unsigned short data) {
-	outb(SZDC_BUS_SELECT_DRAM, io + SZDC_BUS_SELECT);
+static void SetDRAMCtrl(void __iomem *io, unsigned short addr, unsigned short data) {
+	iowrite8(SZDC_BUS_SELECT_DRAM, io + SZDC_BUS_SELECT);
 	outbw(addr, io + SZDC_BUS_ADDR);
 	outbw(data, io + SZDC_BUS_DATA);
 }
-static void SetRealVGA(ioaddr_t io, unsigned short addr, unsigned short data) {
-	outb(SZDC_BUS_SELECT_VGA, io + SZDC_BUS_SELECT);
+static void SetRealVGA(void __iomem *io, unsigned short addr, unsigned short data) {
+	iowrite8(SZDC_BUS_SELECT_VGA, io + SZDC_BUS_SELECT);
 	outbw(addr, io + SZDC_BUS_ADDR);
 	outbw(data, io + SZDC_BUS_DATA);
 }
 
-static void eep_data_out(ioaddr_t io, int data) {
+static void eep_data_out(void __iomem *io, int data) {
 	char val = SZDC_EEPROM_ENABLE | SZDC_EEPROM_CS;
 	if (data)
 		val |= SZDC_EEPROM_DATA_OUT;
 
-	outb(val, io + SZDC_EEPROM);
+	iowrite8(val, io + SZDC_EEPROM);
 	udelay(4);
 	val |= SZDC_EEPROM_CLOCK;
-	outb(val, io + SZDC_EEPROM);
+	iowrite8(val, io + SZDC_EEPROM);
 	udelay(4);
 }
 
-static unsigned short eep_data_read(ioaddr_t io, unsigned char addr)
+static unsigned short eep_data_read(void __iomem *io, unsigned char addr)
 {
 	unsigned short result = 0;
 	int i;
 
-	outb(SZDC_EEPROM_ENABLE, io + SZDC_EEPROM);
+	iowrite8(SZDC_EEPROM_ENABLE, io + SZDC_EEPROM);
 	udelay(4);
-	outb(SZDC_EEPROM_ENABLE | SZDC_EEPROM_CS, io + SZDC_EEPROM);
+	iowrite8(SZDC_EEPROM_ENABLE | SZDC_EEPROM_CS, io + SZDC_EEPROM);
 	udelay(4);
 
 	eep_data_out(io, 1);
@@ -201,22 +201,22 @@ static unsigned short eep_data_read(ioaddr_t io, unsigned char addr)
 	for (i = 0xF; i >= 0; i--) {
 		eep_data_out(io, 0);
 		result <<= 1;
-		if (inb(io + SZDC_EEPROM) & SZDC_EEPROM_DATA_IN) {
+		if (ioread8(io + SZDC_EEPROM) & SZDC_EEPROM_DATA_IN) {
 			result |= 1;
 		}
 	}
 
-	outb(SZDC_EEPROM_ENABLE | SZDC_EEPROM_CS, io + SZDC_EEPROM);
+	iowrite8(SZDC_EEPROM_ENABLE | SZDC_EEPROM_CS, io + SZDC_EEPROM);
 	udelay(4);
-	outb(SZDC_EEPROM_ENABLE, io + SZDC_EEPROM);
+	iowrite8(SZDC_EEPROM_ENABLE, io + SZDC_EEPROM);
 	udelay(4);
-	outb(0, io + SZDC_EEPROM);
+	iowrite8(0, io + SZDC_EEPROM);
 	udelay(4);
 
 	return result;
 }
 
-static int WaitCapture(ioaddr_t io) {
+static int WaitCapture(void __iomem *io) {
 	int cnt;
 
 	cnt = 0x100000;
@@ -227,7 +227,7 @@ static int WaitCapture(ioaddr_t io) {
 			return 1;
 	}
 }
-static int EnableSendDataToMCon(ioaddr_t io) {
+static int EnableSendDataToMCon(void __iomem *io) {
 	int i;
 	clearw(SZDC_MCON_DISABLED, io + SZDC_MCON);
 	setw(SZDC_MCON_ENABLED2, io + SZDC_MCON);
@@ -244,7 +244,7 @@ static int EnableSendDataToMCon(ioaddr_t io) {
 	return 1;
 
 }
-static void DisableSendDataToMCon(ioaddr_t io, unsigned char start) {
+static void DisableSendDataToMCon(void __iomem *io, unsigned char start) {
 
 	clearw(SZDC_MCON_ENABLED2, io + SZDC_MCON);
 	if (start) {
@@ -255,9 +255,9 @@ static void DisableSendDataToMCon(ioaddr_t io, unsigned char start) {
 	setw(SZDC_MCON_DISABLED, io + SZDC_MCON);
 }
 
-static void SendDataToMCon(ioaddr_t io, unsigned short addr, unsigned short data) {
+static void SendDataToMCon(void __iomem *io, unsigned short addr, unsigned short data) {
 	unsigned short d;
-	outb(SZDC_BUS_SELECT_MCON, io + SZDC_BUS_SELECT);
+	iowrite8(SZDC_BUS_SELECT_MCON, io + SZDC_BUS_SELECT);
 	outbw(addr, io + SZDC_BUS_ADDR);
 	outbw(data, io + SZDC_BUS_DATA);
 
@@ -273,7 +273,7 @@ static void SendDataToMCon(ioaddr_t io, unsigned short addr, unsigned short data
 }
 
 static int sharpzdc_start(struct sharpzdc_info *zdcinfo) {
-	ioaddr_t io = zdcinfo->io;
+	void __iomem *io = zdcinfo->io;
 	const struct firmware *ag6exe;
 	int ret;
 	int i;
@@ -404,7 +404,7 @@ static int sharpzdc_start(struct sharpzdc_info *zdcinfo) {
 }
 
 static void sharpzdc_stop(struct sharpzdc_info *zdcinfo) {
-	ioaddr_t io = zdcinfo->io;
+	void __iomem *io = zdcinfo->io;
 
 	clearw(0x8000, io + SZDC_FLAGS2);
 	clearw(0x0200, io + SZDC_FLAGS1);
@@ -421,7 +421,7 @@ static void get_photo_straight(struct sharpzdc_info *zdcinfo, void *buf)
 {
 	int width = zdcinfo->width;
 	unsigned line_stride = zdcinfo->line_stride;
-	ioaddr_t io = zdcinfo->io;
+	void __iomem *io = zdcinfo->io;
 	void *cur_buf = buf;
 	void *end_buf = buf + zdcinfo->image_size;
 
@@ -433,7 +433,7 @@ static void get_photo_straight(struct sharpzdc_info *zdcinfo, void *buf)
 		unsigned *pos = cur_buf;
 		unsigned *end = cur_buf + (width << 1);
 		while (pos < end) {
-			unsigned data = inl(io + SZDC_DATA);
+			unsigned data = ioread32(io + SZDC_DATA);
 			*(pos++) = data;
 		}
 		cur_buf += line_stride;
@@ -442,7 +442,7 @@ static void get_photo_straight(struct sharpzdc_info *zdcinfo, void *buf)
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 static int sharpzdc_get(struct sharpzdc_info *zdcinfo, char *buf) {
-	ioaddr_t io = zdcinfo->io;
+	void __iomem *io = zdcinfo->io;
 	unsigned short dram1, dram2;
 	unsigned short reald1, reald2;
 	unsigned short zoomd1, zoomd2;
@@ -515,7 +515,7 @@ static int sharpzdc_get(struct sharpzdc_info *zdcinfo, char *buf) {
 	udelay(100);
 	clearw(SZDC_FLAGS1_RESET_PTR, io + SZDC_FLAGS1);
 
-	inl(io + SZDC_DATA); /* XXX: was inw */
+	ioread32(io + SZDC_DATA); /* XXX: was inw */
 	get_photo_straight(zdcinfo, buf);
 	if (zdcinfo->readmode & SZDC_READMODE_BETTER) {
 		setw(0x4000, io + SZDC_FLAGS1);
@@ -528,7 +528,7 @@ static int sharpzdc_get(struct sharpzdc_info *zdcinfo, char *buf) {
 #if 0
 
 static int sharpzdc_status(struct sharpzdc_info *zdcinfo, char *buf, size_t size, loff_t *off) {
-	ioaddr_t io = zdcinfo->io;
+	void __iomem *io = zdcinfo->io;
 	unsigned short data;
 	if (size)
 		memset(buf, 0, size);
@@ -551,14 +551,14 @@ static int sharpzdc_status(struct sharpzdc_info *zdcinfo, char *buf, size_t size
 }
 static int sharpzdc_shutterclear(struct sharpzdc_info *zdcinfo)
 {
-	ioaddr_t io = zdcinfo->io;
+	void __iomem *io = zdcinfo->io;
 	clearw(SZDC_FLAGS1_SHUTTER, io + SZDC_FLAGS1);
 	outbw(0, io + SZDC_SET_DATA_BUS);
 	return 1;
 }
 static int sharpzdc_setiris(struct sharpzdc_info *zdcinfo)
 {
-	ioaddr_t io = zdcinfo->io;
+	void __iomem *io = zdcinfo->io;
 	EnableSendDataToMCon(io);
 	SendDataToMCon(io, 0xF0A, zdcinfo->iris);
 	DisableSendDataToMCon(io, 0);
@@ -568,7 +568,7 @@ static int sharpzdc_setiris(struct sharpzdc_info *zdcinfo)
 
 static int param_modeset(struct sharpzdc_info *zdcinfo, const char *data)
 {
-	ioaddr_t io = zdcinfo->io;
+	void __iomem *io = zdcinfo->io;
 	int val;
 	unsigned orig = zdcinfo->readmode;
 	int ret = get_param_value(data, '=', &val);
@@ -1242,7 +1242,9 @@ static int sharpzdc_probe(struct pcmcia_device *link)
 	if (ret)
 		goto err_config;
 
-	info->io = link->io.BasePort1;
+	info->io = ioport_map(link->io.BasePort1, link->io.NumPorts1);
+	if (!info->io)
+		goto err_map;
 
 	info->vdev = video_device_alloc();
 	if (info->vdev == NULL) {
@@ -1291,6 +1293,8 @@ err_start:
 		info->vdev = NULL;
 	}
 err_vdev:
+	ioport_unmap(info->io);
+err_map:
 	pcmcia_disable_device(link);
 err_config:
 	kref_put(&info->ref, sharpzdc_info_release);
@@ -1308,6 +1312,7 @@ static void sharpzdc_remove(struct pcmcia_device *link)
 
 	sharpzdc_stop(info);
 
+	ioport_unmap(info->io);
 	pcmcia_disable_device(link);
 	kref_put(&info->ref, sharpzdc_info_release);
 }
