@@ -1083,20 +1083,94 @@ static struct v4l2_ioctl_ops sharpzdc_ioctl_ops = {
 #define CS_CHECK(fn, ret) \
 do { last_fn = (fn); if ((last_ret = (ret)) != 0) goto cs_failed; } while (0)
 
-#define CFG_CHECK(fn, ret) \
-do { last_fn = (fn); if ((last_ret = (ret)) != 0) goto next_entry; } while (0)
+static int sharpzdc_config_check(struct pcmcia_device *link,
+		cistpl_cftable_entry_t *cfg,
+		cistpl_cftable_entry_t *dflt,
+		unsigned int vcc,
+		void *priv_data)
+{
+	win_req_t *req = priv_data;
+
+	if (cfg->index == 0)
+		return -ENODEV;
+
+	/* Does this card need audio output? */
+	if (cfg->flags & CISTPL_CFTABLE_AUDIO) {
+		link->conf.Attributes |= CONF_ENABLE_SPKR;
+		link->conf.Status = CCSR_AUDIO_ENA;
+	}
+
+	/* Use power settings for Vcc and Vpp if present */
+	/*  Note that the CIS values need to be rescaled */
+	if (cfg->vcc.present & (1<<CISTPL_POWER_VNOM)) {
+		if (vcc != cfg->vcc.param[CISTPL_POWER_VNOM]/10000)
+			return -ENODEV;
+	} else if (dflt->vcc.present & (1<<CISTPL_POWER_VNOM)) {
+		if (vcc != dflt->vcc.param[CISTPL_POWER_VNOM]/10000)
+			return -ENODEV;
+	}
+
+	if (cfg->vpp1.present & (1<<CISTPL_POWER_VNOM))
+		link->conf.Vpp = cfg->vpp1.param[CISTPL_POWER_VNOM]/10000;
+	else if (dflt->vpp1.present & (1<<CISTPL_POWER_VNOM))
+		link->conf.Vpp = dflt->vpp1.param[CISTPL_POWER_VNOM]/10000;
+
+	/* Do we need to allocate an interrupt? */
+	if (cfg->irq.IRQInfo1 || dflt->irq.IRQInfo1) {
+		link->conf.Attributes |= CONF_ENABLE_IRQ;
+	}
+
+	/* IO window settings */
+	link->io.NumPorts1 = link->io.NumPorts2 = 0;
+	if ((cfg->io.nwin > 0) || (dflt->io.nwin > 0)) {
+		cistpl_io_t *io = (cfg->io.nwin) ? &cfg->io : &dflt->io;
+		link->io.Attributes1 = IO_DATA_PATH_WIDTH_AUTO;
+		if (!(io->flags & CISTPL_IO_8BIT))
+			link->io.Attributes1 = IO_DATA_PATH_WIDTH_16;
+		if (!(io->flags & CISTPL_IO_16BIT))
+			link->io.Attributes1 = IO_DATA_PATH_WIDTH_8;
+		link->io.IOAddrLines = io->flags & CISTPL_IO_LINES_MASK;
+		link->io.BasePort1 = io->win[0].base;
+		link->io.NumPorts1 = io->win[0].len;
+		if (io->nwin > 1) {
+			link->io.Attributes2 = link->io.Attributes1;
+			link->io.BasePort2 = io->win[1].base;
+			link->io.NumPorts2 = io->win[1].len;
+		}
+	}
+
+	/* This reserves IO space but doesn't actually enable it */
+	if (pcmcia_request_io(link, &link->io) != 0)
+		return -ENODEV;
+
+	if ((cfg->mem.nwin > 0) || (dflt->mem.nwin > 0)) {
+		cistpl_mem_t *mem = (cfg->mem.nwin) ? &cfg->mem : &dflt->mem;
+		memreq_t map;
+		req->Attributes = WIN_DATA_WIDTH_16|WIN_MEMORY_TYPE_CM;
+		req->Attributes |= WIN_ENABLE;
+		req->Base = mem->win[0].host_addr;
+		req->Size = mem->win[0].len;
+		if (req->Size < 0x1000)
+			req->Size = 0x1000;
+		req->AccessSpeed = 0;
+		if (pcmcia_request_window(&link, req, &link->win) != 0)
+			return -ENODEV;
+
+		map.Page = 0;
+		map.CardOffset = mem->win[0].card_addr;
+		if (pcmcia_map_mem_page(link->win, &map) != 0)
+			return -ENODEV;
+	}
+
+	return 0;
+}
 
 static int sharpzdc_config(struct pcmcia_device *link)
 {
 	tuple_t tuple;
-	cisparse_t parse;
-	cistpl_cftable_entry_t dflt = { 0 };
-	cistpl_cftable_entry_t *cfg = &parse.cftable_entry;
-	config_info_t conf;
 	u_short buf[64];
 	int last_fn, last_ret;
 	win_req_t req;
-	memreq_t map;
 
 	pr_debug("%s\n", __func__);
 
@@ -1104,83 +1178,13 @@ static int sharpzdc_config(struct pcmcia_device *link)
 	tuple.TupleDataMax = sizeof(buf);
 	tuple.TupleOffset = 0;
 
-	/* Not sure if this is right... look up the current Vcc */
-	CS_CHECK(GetConfigurationInfo, pcmcia_get_configuration_info(link, &conf));
-
 	tuple.Attributes = 0;
 	tuple.DesiredTuple = CISTPL_CFTABLE_ENTRY;
-	CS_CHECK(GetFirstTuple, pcmcia_get_first_tuple(link, &tuple));
-	while (1) {
-		CFG_CHECK(GetTupleData, pcmcia_get_tuple_data(link, &tuple));
-		CFG_CHECK(ParseTuple, pcmcia_parse_tuple(link, &tuple, &parse));
 
-		if (cfg->flags & CISTPL_CFTABLE_DEFAULT)
-			dflt = *cfg;
-		if (cfg->index == 0)
-			goto next_entry;
-		link->conf.ConfigIndex = cfg->index;
-
-		/* Use power settings for Vcc and Vpp if present */
-		/*  Note that the CIS values need to be rescaled */
-		if (cfg->vcc.present & (1<<CISTPL_POWER_VNOM)) {
-			if (conf.Vcc != cfg->vcc.param[CISTPL_POWER_VNOM]/10000)
-				goto next_entry;
-		} else if (dflt.vcc.present & (1<<CISTPL_POWER_VNOM)) {
-			if (conf.Vcc != dflt.vcc.param[CISTPL_POWER_VNOM]/10000)
-				goto next_entry;
-		}
-
-		if (cfg->vpp1.present & (1<<CISTPL_POWER_VNOM))
-			link->conf.Vpp =
-				cfg->vpp1.param[CISTPL_POWER_VNOM]/10000;
-		else if (dflt.vpp1.present & (1<<CISTPL_POWER_VNOM))
-			link->conf.Vpp =
-				dflt.vpp1.param[CISTPL_POWER_VNOM]/10000;
-
-		/* Do we need to allocate an interrupt? */
-		if (cfg->irq.IRQInfo1 || dflt.irq.IRQInfo1) {
-			link->conf.Attributes |= CONF_ENABLE_IRQ;
-		}
-
-		/* IO window settings */
-		link->io.NumPorts1 = link->io.NumPorts2 = 0;
-		if ((cfg->io.nwin > 0) || (dflt.io.nwin > 0)) {
-			cistpl_io_t *io = (cfg->io.nwin) ? &cfg->io : &dflt.io;
-			link->io.Attributes1 = IO_DATA_PATH_WIDTH_AUTO;
-			if (!(io->flags & CISTPL_IO_8BIT))
-				link->io.Attributes1 = IO_DATA_PATH_WIDTH_16;
-			if (!(io->flags & CISTPL_IO_16BIT))
-				link->io.Attributes1 = IO_DATA_PATH_WIDTH_8;
-			link->io.IOAddrLines = io->flags & CISTPL_IO_LINES_MASK;
-			link->io.BasePort1 = io->win[0].base;
-			link->io.NumPorts1 = io->win[0].len;
-			if (io->nwin > 1) {
-				link->io.Attributes2 = link->io.Attributes1;
-				link->io.BasePort2 = io->win[1].base;
-				link->io.NumPorts2 = io->win[1].len;
-			}
-			/* This reserves IO space but doesn't actually enable it */
-			CFG_CHECK(RequestIO, pcmcia_request_io(link, &link->io));
-		}
-
-		if ((cfg->mem.nwin > 0) || (dflt.mem.nwin > 0)) {
-			cistpl_mem_t *mem =
-				(cfg->mem.nwin) ? &cfg->mem : &dflt.mem;
-			req.Attributes = WIN_DATA_WIDTH_16|WIN_MEMORY_TYPE_CM;
-			req.Attributes |= WIN_ENABLE;
-			req.Base = mem->win[0].host_addr;
-			req.Size = mem->win[0].len;
-			if (req.Size < 0x1000)
-				req.Size = 0x1000;
-			req.AccessSpeed = 0;
-			CFG_CHECK(RequestWindow, pcmcia_request_window(&link, &req, &link->win));
-			map.Page = 0; map.CardOffset = mem->win[0].card_addr;
-			CFG_CHECK(MapMemPage, pcmcia_map_mem_page(link->win, &map));
-		}
-
-		break;
-next_entry:
-		CS_CHECK(GetNextTuple, pcmcia_get_next_tuple(link, &tuple));
+	last_ret = pcmcia_loop_config(link, sharpzdc_config_check, &req);
+	if (last_ret) {
+		last_fn = GetNextTuple;
+		goto cs_failed;
 	}
 
 	if (link->conf.Attributes & CONF_ENABLE_IRQ)
@@ -1189,9 +1193,8 @@ next_entry:
 	CS_CHECK(RequestConfiguration, pcmcia_request_configuration(link, &link->conf));
 
 	/* Finally, report what we've done */
-	printk(KERN_INFO "%s: index 0x%02x: Vcc %d.%d",
-		   link->dev.bus_id, link->conf.ConfigIndex,
-		   conf.Vcc/10, conf.Vcc%10);
+	printk(KERN_INFO "%s: index 0x%02x: ",
+		   link->dev.bus_id, link->conf.ConfigIndex);
 	if (link->conf.Vpp)
 		printk(", Vpp %d.%d", link->conf.Vpp/10, link->conf.Vpp%10);
 	if (link->conf.Attributes & CONF_ENABLE_IRQ)
