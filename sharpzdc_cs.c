@@ -120,7 +120,7 @@ static inline void iowrite8(u8 data, void __iomem *io)
 		outbw(__d, io);  \
 	} while (0)
 
-static const unsigned short sharpzdc_params[] = {
+static const unsigned short __devinitdata sharpzdc_params[] = {
 	0xFA0,	0,
 	0xF0E,	0x50,
 	0xF0F,	0x60,
@@ -129,7 +129,7 @@ static const unsigned short sharpzdc_params[] = {
 	0xF0D,	2,
 	0xF0A,	0x60,
 };
-static const unsigned short sharpzdc_camcore[] = {
+static const unsigned short __devinitdata sharpzdc_camcore[] = {
 	0x50,	0x25,
 	0x52,	0xcd,
 	0x54,	0x55,
@@ -139,7 +139,7 @@ static const unsigned short sharpzdc_camcore[] = {
 	0x60,	0x1285,
 };
 
-static const unsigned short sharpzdc_gamma[] = {
+static const unsigned short __devinitdata sharpzdc_gamma[] = {
 	0x00, 0x03, 0x05, 0x07, 0x09, 0x0a, 0x0c, 0x0d,
 	0x0f, 0x10, 0x11, 0x12, 0x13, 0x15, 0x16, 0x17,
 	0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
@@ -151,7 +151,7 @@ static const unsigned short sharpzdc_gamma[] = {
 };
 
 
-static void SetCamCoreData(void __iomem *io, unsigned short addr, unsigned short data)
+static void __devinit SetCamCoreData(void __iomem *io, unsigned short addr, unsigned short data)
 {
 	iowrite8(SZDC_BUS_SELECT_CORE, io + SZDC_BUS_SELECT);
 	outbw(addr, io + SZDC_BUS_ADDR);
@@ -170,7 +170,7 @@ static void SetRealVGA(void __iomem *io, unsigned short addr, unsigned short dat
 	outbw(data, io + SZDC_BUS_DATA);
 }
 
-static void eep_data_out(void __iomem *io, int data)
+static void __devinit eep_data_out(void __iomem *io, int data)
 {
 	char val = SZDC_EEPROM_ENABLE | SZDC_EEPROM_CS;
 	if (data)
@@ -183,7 +183,7 @@ static void eep_data_out(void __iomem *io, int data)
 	udelay(4);
 }
 
-static unsigned short eep_data_read(void __iomem *io, unsigned char addr)
+static unsigned short __devinit eep_data_read(void __iomem *io, unsigned char addr)
 {
 	unsigned short result = 0;
 	int i;
@@ -229,7 +229,7 @@ static int WaitCapture(void __iomem *io)
 			return 1;
 	}
 }
-static int EnableSendDataToMCon(void __iomem *io)
+static int __devinit EnableSendDataToMCon(void __iomem *io)
 {
 	int i;
 	clearw(SZDC_MCON_DISABLED, io + SZDC_MCON);
@@ -247,7 +247,7 @@ static int EnableSendDataToMCon(void __iomem *io)
 	return 1;
 
 }
-static void DisableSendDataToMCon(void __iomem *io, unsigned char start)
+static void __devinit DisableSendDataToMCon(void __iomem *io, unsigned char start)
 {
 
 	clearw(SZDC_MCON_ENABLED2, io + SZDC_MCON);
@@ -259,7 +259,7 @@ static void DisableSendDataToMCon(void __iomem *io, unsigned char start)
 	setw(SZDC_MCON_DISABLED, io + SZDC_MCON);
 }
 
-static void SendDataToMCon(void __iomem *io, unsigned short addr, unsigned short data)
+static void __devinit SendDataToMCon(void __iomem *io, unsigned short addr, unsigned short data)
 {
 	unsigned short d;
 	iowrite8(SZDC_BUS_SELECT_MCON, io + SZDC_BUS_SELECT);
@@ -277,7 +277,7 @@ static void SendDataToMCon(void __iomem *io, unsigned short addr, unsigned short
 	setw(SZDC_MCON_RO, io + SZDC_MCON);
 }
 
-static int sharpzdc_start(struct sharpzdc_info *zdcinfo)
+static int __devinit sharpzdc_start(struct sharpzdc_info *zdcinfo)
 {
 	void __iomem *io = zdcinfo->io;
 	const struct firmware *ag6exe;
@@ -1084,7 +1084,7 @@ static struct v4l2_ioctl_ops sharpzdc_ioctl_ops = {
 #define CS_CHECK(fn, ret) \
 do { last_fn = (fn); if ((last_ret = (ret)) != 0) goto cs_failed; } while (0)
 
-static int sharpzdc_config_check(struct pcmcia_device *link,
+static int __devinit sharpzdc_config_check(struct pcmcia_device *link,
 		cistpl_cftable_entry_t *cfg,
 		cistpl_cftable_entry_t *dflt,
 		unsigned int vcc,
@@ -1166,7 +1166,7 @@ static int sharpzdc_config_check(struct pcmcia_device *link,
 	return 0;
 }
 
-static int sharpzdc_config(struct pcmcia_device *link)
+static int __devinit sharpzdc_config(struct pcmcia_device *link)
 {
 	tuple_t tuple;
 	u_short buf[64];
@@ -1218,7 +1218,7 @@ cs_failed:
 	return -ENODEV;
 }
 
-static int sharpzdc_probe(struct pcmcia_device *link)
+static int __devinit sharpzdc_probe(struct pcmcia_device *link)
 {
 	struct sharpzdc_info *info;
 	int ret;
