@@ -151,26 +151,26 @@ static const unsigned short __devinitdata sharpzdc_gamma[] = {
 };
 
 
-static void __devinit SetCamCoreData(void __iomem *io, unsigned short addr, unsigned short data)
+static void __devinit set_camcore(void __iomem *io, unsigned short addr, unsigned short data)
 {
 	iowrite8(SZDC_BUS_SELECT_CORE, io + SZDC_BUS_SELECT);
 	outbw(addr, io + SZDC_BUS_ADDR);
 	outbw(data, io + SZDC_BUS_DATA);
 }
-static void SetDRAMCtrl(void __iomem *io, unsigned short addr, unsigned short data)
+static void set_dram_ctrl(void __iomem *io, unsigned short addr, unsigned short data)
 {
 	iowrite8(SZDC_BUS_SELECT_DRAM, io + SZDC_BUS_SELECT);
 	outbw(addr, io + SZDC_BUS_ADDR);
 	outbw(data, io + SZDC_BUS_DATA);
 }
-static void SetRealVGA(void __iomem *io, unsigned short addr, unsigned short data)
+static void set_vga(void __iomem *io, unsigned short addr, unsigned short data)
 {
 	iowrite8(SZDC_BUS_SELECT_VGA, io + SZDC_BUS_SELECT);
 	outbw(addr, io + SZDC_BUS_ADDR);
 	outbw(data, io + SZDC_BUS_DATA);
 }
 
-static void __devinit eep_data_out(void __iomem *io, int data)
+static void __devinit eeprom_strobe(void __iomem *io, int data)
 {
 	char val = SZDC_EEPROM_ENABLE | SZDC_EEPROM_CS;
 	if (data)
@@ -183,7 +183,7 @@ static void __devinit eep_data_out(void __iomem *io, int data)
 	udelay(4);
 }
 
-static unsigned short __devinit eep_data_read(void __iomem *io, unsigned char addr)
+static unsigned short __devinit eeprom_read(void __iomem *io, unsigned char addr)
 {
 	unsigned short result = 0;
 	int i;
@@ -193,15 +193,15 @@ static unsigned short __devinit eep_data_read(void __iomem *io, unsigned char ad
 	iowrite8(SZDC_EEPROM_ENABLE | SZDC_EEPROM_CS, io + SZDC_EEPROM);
 	udelay(4);
 
-	eep_data_out(io, 1);
-	eep_data_out(io, 1);
-	eep_data_out(io, 0);
+	eeprom_strobe(io, 1);
+	eeprom_strobe(io, 1);
+	eeprom_strobe(io, 0);
 
 	for (i = 7; i >= 0; i--)
-		eep_data_out(io, addr & (1 << i));
+		eeprom_strobe(io, addr & (1 << i));
 
 	for (i = 0xF; i >= 0; i--) {
-		eep_data_out(io, 0);
+		eeprom_strobe(io, 0);
 		result <<= 1;
 		if (ioread8(io + SZDC_EEPROM) & SZDC_EEPROM_DATA_IN)
 			result |= 1;
@@ -217,7 +217,7 @@ static unsigned short __devinit eep_data_read(void __iomem *io, unsigned char ad
 	return result;
 }
 
-static int WaitCapture(void __iomem *io)
+static int wait_capture(void __iomem *io)
 {
 	int cnt;
 
@@ -229,7 +229,7 @@ static int WaitCapture(void __iomem *io)
 			return 1;
 	}
 }
-static int __devinit EnableSendDataToMCon(void __iomem *io)
+static int __devinit mcon_send_enable(void __iomem *io)
 {
 	int i;
 	clearw(SZDC_MCON_DISABLED, io + SZDC_MCON);
@@ -247,7 +247,7 @@ static int __devinit EnableSendDataToMCon(void __iomem *io)
 	return 1;
 
 }
-static void __devinit DisableSendDataToMCon(void __iomem *io, unsigned char start)
+static void __devinit mcon_send_disable(void __iomem *io, unsigned char start)
 {
 
 	clearw(SZDC_MCON_ENABLED2, io + SZDC_MCON);
@@ -259,7 +259,7 @@ static void __devinit DisableSendDataToMCon(void __iomem *io, unsigned char star
 	setw(SZDC_MCON_DISABLED, io + SZDC_MCON);
 }
 
-static void __devinit SendDataToMCon(void __iomem *io, unsigned short addr, unsigned short data)
+static void __devinit mcon_send(void __iomem *io, unsigned short addr, unsigned short data)
 {
 	unsigned short d;
 	iowrite8(SZDC_BUS_SELECT_MCON, io + SZDC_BUS_SELECT);
@@ -308,30 +308,30 @@ static int __devinit sharpzdc_start(struct sharpzdc_info *zdcinfo)
 	setw(0x8000, io + SZDC_FLAGS1);
 
 	for (i = 0; i < 0x1F; i++) {
-		SetCamCoreData(io, 0x70, i);
-		SetCamCoreData(io, 0x72, eep_data_read(io, i * 2 + 0xC0));
-		SetCamCoreData(io, 0x74, eep_data_read(io, i * 2 + 0xC1));
+		set_camcore(io, 0x70, i);
+		set_camcore(io, 0x72, eeprom_read(io, i * 2 + 0xC0));
+		set_camcore(io, 0x74, eeprom_read(io, i * 2 + 0xC1));
 	}
 
 	for (i = 0; i < 0x16; i += 2) {
-		unsigned short r = eep_data_read(io, i / 2 + 0x90);
-		SetCamCoreData(io, 0x78, i);
-		SetCamCoreData(io, 0x7A, r & 0xff);
-		SetCamCoreData(io, 0x78, i + 1);
-		SetCamCoreData(io, 0x7A, r >> 8);
+		unsigned short r = eeprom_read(io, i / 2 + 0x90);
+		set_camcore(io, 0x78, i);
+		set_camcore(io, 0x7A, r & 0xff);
+		set_camcore(io, 0x78, i + 1);
+		set_camcore(io, 0x7A, r >> 8);
 	}
 
 	for (i = 0; i < 0x10; i += 2) {
-		unsigned short r = eep_data_read(io, i / 2 + 0xA0);
-		SetCamCoreData(io, 0x78, i + 0x100);
-		SetCamCoreData(io, 0x7A, r & 0xff);
-		SetCamCoreData(io, 0x78, i + 0x101);
-		SetCamCoreData(io, 0x7A, r >> 8);
+		unsigned short r = eeprom_read(io, i / 2 + 0xA0);
+		set_camcore(io, 0x78, i + 0x100);
+		set_camcore(io, 0x7A, r & 0xff);
+		set_camcore(io, 0x78, i + 0x101);
+		set_camcore(io, 0x7A, r >> 8);
 	}
 
-	SetCamCoreData(io, 0x78, 0x110);
-	SetCamCoreData(io, 0x7A, eep_data_read(io, 0xA8) & 0xff);
-	SetCamCoreData(io, 0x7C, 0);
+	set_camcore(io, 0x78, 0x110);
+	set_camcore(io, 0x7A, eeprom_read(io, 0xA8) & 0xff);
+	set_camcore(io, 0x7C, 0);
 
 	setw(0x0200, io + SZDC_FLAGS1);
 	setw(0x0c00, io + SZDC_FLAGS1);
@@ -344,17 +344,17 @@ static int __devinit sharpzdc_start(struct sharpzdc_info *zdcinfo)
 	clearw(0x0007, io + SZDC_FLAGS2);
 	setw(0x0001, io + SZDC_FLAGS2);
 
-	SetCamCoreData(io, 0x44, 1);
+	set_camcore(io, 0x44, 1);
 
-	SetDRAMCtrl(io, 0, 0x3C28); /* 640 x 480 */
-	SetDRAMCtrl(io, 1, 0);
-	SetDRAMCtrl(io, 2, 0x28);
+	set_dram_ctrl(io, 0, 0x3C28); /* 640 x 480 */
+	set_dram_ctrl(io, 1, 0);
+	set_dram_ctrl(io, 2, 0x28);
 
-	SetRealVGA(io, 0, 4);
-	SetRealVGA(io, 1, 0x20);
-	SetRealVGA(io, 2, 0x280); /* 640 */
-	SetRealVGA(io, 4, 0x100);
-	SetRealVGA(io, 5, 0x100);
+	set_vga(io, 0, 4);
+	set_vga(io, 1, 0x20);
+	set_vga(io, 2, 0x280); /* 640 */
+	set_vga(io, 4, 0x100);
+	set_vga(io, 5, 0x100);
 
 	clearw(SZDC_FLAGS1_SHUTTER, io + SZDC_FLAGS1);
 
@@ -365,41 +365,41 @@ static int __devinit sharpzdc_start(struct sharpzdc_info *zdcinfo)
 	clearw(0x4000, io + SZDC_FLAGS1);
 	setw(0x4000, io + SZDC_FLAGS2);
 
-	ret = EnableSendDataToMCon(io);
+	ret = mcon_send_enable(io);
 	if (ret != 0) {
 		for (i = 0; i < sizeof(sharpzdc_params) / sizeof(*sharpzdc_params); i += 2)
-			SendDataToMCon(io, sharpzdc_params[i], sharpzdc_params[i+1]);
+			mcon_send(io, sharpzdc_params[i], sharpzdc_params[i+1]);
 
-		DisableSendDataToMCon(io, 0);
+		mcon_send_disable(io, 0);
 	}
 
-	SetCamCoreData(io, 0x44, 1);
+	set_camcore(io, 0x44, 1);
 	for (i = 0; i <= 0x3f; i++) {
-		SetCamCoreData(io, 0x40, i);
-		SetCamCoreData(io, 0x42, sharpzdc_gamma[i]);
+		set_camcore(io, 0x40, i);
+		set_camcore(io, 0x42, sharpzdc_gamma[i]);
 	}
-	SetCamCoreData(io, 0x44, 0);
+	set_camcore(io, 0x44, 0);
 
 	for (i = 0; i < sizeof(sharpzdc_camcore) / sizeof(*sharpzdc_camcore); i += 2)
-		SetCamCoreData(io, sharpzdc_camcore[i], sharpzdc_camcore[i+1]);
+		set_camcore(io, sharpzdc_camcore[i], sharpzdc_camcore[i+1]);
 
-	ret = EnableSendDataToMCon(io);
+	ret = mcon_send_enable(io);
 	if (ret == 0) {
 		release_firmware(ag6exe);
 		return -ENOTTY;
 	}
 
 	for (i = 0; i < ag6exe->size/2 && *((unsigned short *)ag6exe->data) != 0xffff; i++)
-		SendDataToMCon(io, i, ((unsigned short *)ag6exe->data)[i]);
+		mcon_send(io, i, ((unsigned short *)ag6exe->data)[i]);
 
-	DisableSendDataToMCon(io, 1);
+	mcon_send_disable(io, 1);
 
 	/*
 	 * XXX: This is setiris
 	 */
-	EnableSendDataToMCon(io);
-	SendDataToMCon(io, 0xF0A, 0x60);
-	DisableSendDataToMCon(io, 0);
+	mcon_send_enable(io);
+	mcon_send(io, 0xF0A, 0x60);
+	mcon_send_disable(io, 0);
 
 	release_firmware(ag6exe);
 
@@ -455,7 +455,7 @@ static int sharpzdc_get(struct sharpzdc_info *zdcinfo, char *buf)
 	unsigned short raw_zoom;
 	unsigned short z = 256;
 
-	if (WaitCapture(io) == 0)
+	if (wait_capture(io) == 0)
 		return 0;
 
 	reald1 = zdcinfo->width;
@@ -471,10 +471,10 @@ static int sharpzdc_get(struct sharpzdc_info *zdcinfo, char *buf)
 	zoomd1 = 640*256 / raw_zoom;
 	zoomd2 = 480*256 / raw_zoom;
 
-	SetDRAMCtrl(io, 0, ((zoomd2 >> 3) << 8) | ((zoomd1 >> 4) << 0));
-	SetRealVGA(io, 2, zoomd1);
-	SetRealVGA(io, 4, raw_zoom);
-	SetRealVGA(io, 5, raw_zoom); /* field_34 */
+	set_dram_ctrl(io, 0, ((zoomd2 >> 3) << 8) | ((zoomd1 >> 4) << 0));
+	set_vga(io, 2, zoomd1);
+	set_vga(io, 4, raw_zoom);
+	set_vga(io, 5, raw_zoom); /* field_34 */
 
 	temp1 = (zoomd1 - reald1) >> 1;
 	temp2 = (zoomd2 - reald2) >> 1;
@@ -483,7 +483,7 @@ static int sharpzdc_get(struct sharpzdc_info *zdcinfo, char *buf)
 
 	outbw(0, io + SZDC_SET_DATA_BUS);
 
-	if (WaitCapture(io) == 0)
+	if (wait_capture(io) == 0)
 		return 0;
 	if (zdcinfo->readmode & SZDC_READMODE_BETTER) {
 		clearw(0x4000, io + SZDC_FLAGS1);
@@ -507,8 +507,8 @@ static int sharpzdc_get(struct sharpzdc_info *zdcinfo, char *buf)
 		dram1 |= (temp2 >> 3) << 8;
 	}
 
-	SetDRAMCtrl(io, 1, dram1);
-	SetDRAMCtrl(io, 2, dram2);
+	set_dram_ctrl(io, 1, dram1);
+	set_dram_ctrl(io, 2, dram2);
 
 	if (zdcinfo->readmode & SZDC_READMODE_XFLIP)
 		setw(SZDC_FLAGS2_XFLIP, io + SZDC_FLAGS2);
@@ -560,9 +560,9 @@ static int sharpzdc_shutterclear(struct sharpzdc_info *zdcinfo)
 static int sharpzdc_setiris(struct sharpzdc_info *zdcinfo)
 {
 	void __iomem *io = zdcinfo->io;
-	EnableSendDataToMCon(io);
-	SendDataToMCon(io, 0xF0A, zdcinfo->iris);
-	DisableSendDataToMCon(io, 0);
+	mcon_send_enable(io);
+	mcon_send(io, 0xF0A, zdcinfo->iris);
+	mcon_send_disable(io, 0);
 	outbw(0, io + SZDC_SET_DATA_BUS);
 	return 1;
 }
@@ -579,7 +579,7 @@ static int param_modeset(struct sharpzdc_info *zdcinfo, const char *data)
 	zdcinfo->readmode = (val & 0xf) | (zdcinfo->readmode & SZDC_READMODE_ROTATE);
 	diff = zdcinfo->readmode ^ orig;
 	if (diff & SZDC_READMODE_BETTER) {
-		WaitCapture(zdcinfo->io);
+		wait_capture(zdcinfo->io);
 		if (zdcinfo->readmode & SZDC_READMODE_BETTER) {
 			setw(0x4000, io + SZDC_FLAGS1);
 			clearw(0x4000, io + SZDC_FLAGS2);
