@@ -837,7 +837,7 @@ static int sharpzdc_release(struct inode *inode, struct file *fp)
 	return 0;
 }
 
-static struct file_operations sharpzdc_fops = {
+static const struct file_operations sharpzdc_fops = {
 	.owner		= THIS_MODULE,
 	.open		= sharpzdc_open,
 	.release	= sharpzdc_release,
@@ -1060,7 +1060,7 @@ static int sharpzdc_streamoff(struct file *file, void *private_data, enum v4l2_b
 }
 
 
-static struct v4l2_ioctl_ops sharpzdc_ioctl_ops = {
+static const struct v4l2_ioctl_ops sharpzdc_ioctl_ops = {
 	.vidioc_querycap	= sharpzdc_querycap,
 	.vidioc_enum_input	= sharpzdc_enum_input,
 	.vidioc_g_input		= sharpzdc_g_input,
