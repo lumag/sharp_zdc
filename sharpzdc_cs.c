@@ -59,11 +59,9 @@
 #define SZDC_BUS_ADDR		0xC	/* bw */
 #define SZDC_BUS_DATA		0xE	/* bw */
 
-#define SZDC_READMODE_STATUS	0x01 /* rather than image */
 #define SZDC_READMODE_BETTER	0x02 /* rather than faster */
 #define SZDC_READMODE_XFLIP	0x04
 #define SZDC_READMODE_YFLIP	0x08
-#define SZDC_READMODE_ROTATE	0x10
 
 static unsigned int vid_limit = 16;	/* Video memory limit, in Mb */
 module_param(vid_limit, int, 0644);
@@ -78,7 +76,7 @@ struct sharpzdc_info {
 
 	struct videobuf_queue	vb_vidq;
 	struct list_head	queued;
-	spinlock_t		lock;
+	spinlock_t		lock; /* guards video buffs */
 
 	struct task_struct	*thread;
 	wait_queue_head_t	wq;
@@ -107,20 +105,20 @@ static inline void iowrite8(u8 data, void __iomem *io)
 	ioread8(io+1);		\
 	iowrite8(data >> 8, io+1);
 #define setw(bit, io)   \
-	{				\
-		unsigned short d;\
-		d = inbw(io);  \
-		d |= (bit);	   \
-		outbw(d, io);  \
-	}
+	do {				\
+		unsigned short __d;\
+		__d = inbw(io);  \
+		__d |= (bit);	   \
+		outbw(__d, io);  \
+	} while (0)
 
 #define clearw(bit, io)   \
-	{				\
-		unsigned short d;\
-		d = inbw(io);  \
-		d &= ~(bit);	   \
-		outbw(d, io);  \
-	}
+	do {				\
+		unsigned short __d;\
+		__d = inbw(io);  \
+		__d &= ~(bit);	   \
+		outbw(__d, io);  \
+	} while (0)
 
 static const unsigned short sharpzdc_params[] = {
 	0xFA0,	0,
@@ -153,23 +151,27 @@ static const unsigned short sharpzdc_gamma[] = {
 };
 
 
-static void SetCamCoreData(void __iomem *io, unsigned short addr, unsigned short data) {
+static void SetCamCoreData(void __iomem *io, unsigned short addr, unsigned short data)
+{
 	iowrite8(SZDC_BUS_SELECT_CORE, io + SZDC_BUS_SELECT);
 	outbw(addr, io + SZDC_BUS_ADDR);
 	outbw(data, io + SZDC_BUS_DATA);
 }
-static void SetDRAMCtrl(void __iomem *io, unsigned short addr, unsigned short data) {
+static void SetDRAMCtrl(void __iomem *io, unsigned short addr, unsigned short data)
+{
 	iowrite8(SZDC_BUS_SELECT_DRAM, io + SZDC_BUS_SELECT);
 	outbw(addr, io + SZDC_BUS_ADDR);
 	outbw(data, io + SZDC_BUS_DATA);
 }
-static void SetRealVGA(void __iomem *io, unsigned short addr, unsigned short data) {
+static void SetRealVGA(void __iomem *io, unsigned short addr, unsigned short data)
+{
 	iowrite8(SZDC_BUS_SELECT_VGA, io + SZDC_BUS_SELECT);
 	outbw(addr, io + SZDC_BUS_ADDR);
 	outbw(data, io + SZDC_BUS_DATA);
 }
 
-static void eep_data_out(void __iomem *io, int data) {
+static void eep_data_out(void __iomem *io, int data)
+{
 	char val = SZDC_EEPROM_ENABLE | SZDC_EEPROM_CS;
 	if (data)
 		val |= SZDC_EEPROM_DATA_OUT;
@@ -195,15 +197,14 @@ static unsigned short eep_data_read(void __iomem *io, unsigned char addr)
 	eep_data_out(io, 1);
 	eep_data_out(io, 0);
 
-	for (i = 7; i >= 0; i --)
+	for (i = 7; i >= 0; i--)
 		eep_data_out(io, addr & (1 << i));
 
 	for (i = 0xF; i >= 0; i--) {
 		eep_data_out(io, 0);
 		result <<= 1;
-		if (ioread8(io + SZDC_EEPROM) & SZDC_EEPROM_DATA_IN) {
+		if (ioread8(io + SZDC_EEPROM) & SZDC_EEPROM_DATA_IN)
 			result |= 1;
-		}
 	}
 
 	iowrite8(SZDC_EEPROM_ENABLE | SZDC_EEPROM_CS, io + SZDC_EEPROM);
@@ -216,7 +217,8 @@ static unsigned short eep_data_read(void __iomem *io, unsigned char addr)
 	return result;
 }
 
-static int WaitCapture(void __iomem *io) {
+static int WaitCapture(void __iomem *io)
+{
 	int cnt;
 
 	cnt = 0x100000;
@@ -227,14 +229,15 @@ static int WaitCapture(void __iomem *io) {
 			return 1;
 	}
 }
-static int EnableSendDataToMCon(void __iomem *io) {
+static int EnableSendDataToMCon(void __iomem *io)
+{
 	int i;
 	clearw(SZDC_MCON_DISABLED, io + SZDC_MCON);
 	setw(SZDC_MCON_ENABLED2, io + SZDC_MCON);
 
 	i = 0x500000;
 	while ((inbw(io + SZDC_MCON) & SZDC_MCON_READY) == 0) {
-		i --;
+		i--;
 		if (i == 0) {
 			clearw(SZDC_MCON_ENABLED2, io + SZDC_MCON);
 			return 0;
@@ -244,7 +247,8 @@ static int EnableSendDataToMCon(void __iomem *io) {
 	return 1;
 
 }
-static void DisableSendDataToMCon(void __iomem *io, unsigned char start) {
+static void DisableSendDataToMCon(void __iomem *io, unsigned char start)
+{
 
 	clearw(SZDC_MCON_ENABLED2, io + SZDC_MCON);
 	if (start) {
@@ -255,7 +259,8 @@ static void DisableSendDataToMCon(void __iomem *io, unsigned char start) {
 	setw(SZDC_MCON_DISABLED, io + SZDC_MCON);
 }
 
-static void SendDataToMCon(void __iomem *io, unsigned short addr, unsigned short data) {
+static void SendDataToMCon(void __iomem *io, unsigned short addr, unsigned short data)
+{
 	unsigned short d;
 	iowrite8(SZDC_BUS_SELECT_MCON, io + SZDC_BUS_SELECT);
 	outbw(addr, io + SZDC_BUS_ADDR);
@@ -272,7 +277,8 @@ static void SendDataToMCon(void __iomem *io, unsigned short addr, unsigned short
 	setw(SZDC_MCON_RO, io + SZDC_MCON);
 }
 
-static int sharpzdc_start(struct sharpzdc_info *zdcinfo) {
+static int sharpzdc_start(struct sharpzdc_info *zdcinfo)
+{
 	void __iomem *io = zdcinfo->io;
 	const struct firmware *ag6exe;
 	int ret;
@@ -307,7 +313,7 @@ static int sharpzdc_start(struct sharpzdc_info *zdcinfo) {
 		SetCamCoreData(io, 0x74, eep_data_read(io, i * 2 + 0xC1));
 	}
 
-	for (i = 0; i < 0x16; i+= 2) {
+	for (i = 0; i < 0x16; i += 2) {
 		unsigned short r = eep_data_read(io, i / 2 + 0x90);
 		SetCamCoreData(io, 0x78, i);
 		SetCamCoreData(io, 0x7A, r & 0xff);
@@ -361,9 +367,8 @@ static int sharpzdc_start(struct sharpzdc_info *zdcinfo) {
 
 	ret = EnableSendDataToMCon(io);
 	if (ret != 0) {
-		for (i = 0; i < sizeof(sharpzdc_params) / sizeof(*sharpzdc_params); i += 2) {
+		for (i = 0; i < sizeof(sharpzdc_params) / sizeof(*sharpzdc_params); i += 2)
 			SendDataToMCon(io, sharpzdc_params[i], sharpzdc_params[i+1]);
-		}
 
 		DisableSendDataToMCon(io, 0);
 	}
@@ -375,9 +380,8 @@ static int sharpzdc_start(struct sharpzdc_info *zdcinfo) {
 	}
 	SetCamCoreData(io, 0x44, 0);
 
-	for (i = 0; i < sizeof(sharpzdc_camcore) / sizeof(*sharpzdc_camcore); i += 2) {
+	for (i = 0; i < sizeof(sharpzdc_camcore) / sizeof(*sharpzdc_camcore); i += 2)
 		SetCamCoreData(io, sharpzdc_camcore[i], sharpzdc_camcore[i+1]);
-	}
 
 	ret = EnableSendDataToMCon(io);
 	if (ret == 0) {
@@ -385,9 +389,8 @@ static int sharpzdc_start(struct sharpzdc_info *zdcinfo) {
 		return -ENOTTY;
 	}
 
-	for (i = 0; i < ag6exe->size/2 && *((unsigned short *)ag6exe->data) != 0xffff; i++) {
-		SendDataToMCon(io, i, ((unsigned short *)ag6exe->data)[i] );
-	}
+	for (i = 0; i < ag6exe->size/2 && *((unsigned short *)ag6exe->data) != 0xffff; i++)
+		SendDataToMCon(io, i, ((unsigned short *)ag6exe->data)[i]);
 
 	DisableSendDataToMCon(io, 1);
 
@@ -403,7 +406,8 @@ static int sharpzdc_start(struct sharpzdc_info *zdcinfo) {
 	return 0;
 }
 
-static void sharpzdc_stop(struct sharpzdc_info *zdcinfo) {
+static void sharpzdc_stop(struct sharpzdc_info *zdcinfo)
+{
 	void __iomem *io = zdcinfo->io;
 
 	clearw(0x8000, io + SZDC_FLAGS2);
@@ -441,7 +445,8 @@ static void get_photo_straight(struct sharpzdc_info *zdcinfo, void *buf)
 }
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
-static int sharpzdc_get(struct sharpzdc_info *zdcinfo, char *buf) {
+static int sharpzdc_get(struct sharpzdc_info *zdcinfo, char *buf)
+{
 	void __iomem *io = zdcinfo->io;
 	unsigned short dram1, dram2;
 	unsigned short reald1, reald2;
@@ -499,17 +504,16 @@ static int sharpzdc_get(struct sharpzdc_info *zdcinfo, char *buf) {
 		dram1 |= ((zoomd2 - temp2) >> 3) << 8;
 		dram2 |= 0x8000;
 	} else {
-		dram1 |= (temp2 >> 3)<< 8;
+		dram1 |= (temp2 >> 3) << 8;
 	}
 
 	SetDRAMCtrl(io, 1, dram1);
 	SetDRAMCtrl(io, 2, dram2);
 
-	if (zdcinfo->readmode & SZDC_READMODE_XFLIP) {
+	if (zdcinfo->readmode & SZDC_READMODE_XFLIP)
 		setw(SZDC_FLAGS2_XFLIP, io + SZDC_FLAGS2);
-	} else {
+	else
 		clearw(SZDC_FLAGS2_XFLIP, io + SZDC_FLAGS2);
-	}
 
 	setw(SZDC_FLAGS1_RESET_PTR, io + SZDC_FLAGS1);
 	udelay(100);
@@ -527,24 +531,21 @@ static int sharpzdc_get(struct sharpzdc_info *zdcinfo, char *buf) {
 
 #if 0
 
-static int sharpzdc_status(struct sharpzdc_info *zdcinfo, char *buf, size_t size, loff_t *off) {
+static int sharpzdc_status(struct sharpzdc_info *zdcinfo, char *buf, size_t size, loff_t *off)
+{
 	void __iomem *io = zdcinfo->io;
 	unsigned short data;
 	if (size)
 		memset(buf, 0, size);
 	data = inbw(io + SZDC_FLAGS1);
-	if (size != 0) {
+	if (size != 0)
 		buf[0] = (data & SZDC_FLAGS1_SHUTTER) ? 'S' : 's';
-	}
-	if (size >= 2) {
+	if (size >= 2)
 		buf[1] = (data & SZDC_FLAGS1_REVERSE_DETECTED) ? 'M' : 'm';
-	}
-	if (size >= 3) {
+	if (size >= 3)
 		buf[2] = (data & SZDC_FLAGS1_CAPTURING) ? 'C' : 'c';
-	}
-	if (size >= 4) {
+	if (size >= 4)
 		buf[3] = 'A';
-	}
 	outbw(0, io + SZDC_SET_DATA_BUS);
 	*off += size;
 	return size;
@@ -575,8 +576,8 @@ static int param_modeset(struct sharpzdc_info *zdcinfo, const char *data)
 	unsigned new, diff;
 	if (ret == 0)
 		return 0;
-	zdcinfo->readmode = new = (val & 0xf) | (zdcinfo->readmode & SZDC_READMODE_ROTATE);
-	diff = new ^ orig;
+	zdcinfo->readmode = (val & 0xf) | (zdcinfo->readmode & SZDC_READMODE_ROTATE);
+	diff = zdcinfo->readmode ^ orig;
 	if (diff & SZDC_READMODE_BETTER) {
 		WaitCapture(zdcinfo->io);
 		if (zdcinfo->readmode & SZDC_READMODE_BETTER) {
@@ -592,7 +593,7 @@ static int param_modeset(struct sharpzdc_info *zdcinfo, const char *data)
 #endif
 
 
-static void sharpzdc_fillbuff(struct sharpzdc_info* info, struct videobuf_buffer *vb)
+static void sharpzdc_fillbuff(struct sharpzdc_info *info, struct videobuf_buffer *vb)
 {
 	void *vbuf = videobuf_to_vmalloc(vb);
 
@@ -637,7 +638,7 @@ unlock:
 	return;
 }
 
-int sharpzdc_kthread(void *data)
+static int sharpzdc_kthread(void *data)
 {
 	struct sharpzdc_info *info = data;
 	DECLARE_WAITQUEUE(wait, current);
@@ -648,7 +649,7 @@ int sharpzdc_kthread(void *data)
 	set_freezable();
 	add_wait_queue(&info->wq, &wait);
 
-	for(;;) {
+	for (;;) {
 		if (kthread_should_stop())
 			break;
 
@@ -935,12 +936,12 @@ static int sharpzdc_try_fmt_vid_cap(struct file *file, void *private_data,
 		struct v4l2_format *f)
 {
 	pr_debug("%s\n", __func__);
-	// FIXME: width, height, bytesperline, sizeimage limitation wrt rotating and zoom.
+	/* FIXME: width, height, bytesperline, sizeimage limitation wrt rotating and zoom. */
 	if (f->fmt.pix.width < 32)
 		f->fmt.pix.width = 32;
 	if (f->fmt.pix.width > 640)
 		f->fmt.pix.width = 640;
-	f->fmt.pix.width = (f->fmt.pix.width + 1) &~1;
+	f->fmt.pix.width = (f->fmt.pix.width + 1)&~1;
 
 	if (f->fmt.pix.height < 32)
 		f->fmt.pix.height = 32;
@@ -980,7 +981,7 @@ static int sharpzdc_s_fmt_vid_cap(struct file *file, void *private_data,
 		goto out;
 	}
 
-	// FIXME: width, height, bytesperline, sizeimage limitation wrt rotating and zoom.
+	/* FIXME: width, height, bytesperline, sizeimage limitation wrt rotating and zoom. */
 	info->width = f->fmt.pix.width;
 	info->height = f->fmt.pix.height;
 	info->line_stride = f->fmt.pix.bytesperline;
@@ -997,7 +998,7 @@ static int sharpzdc_reqbufs(struct file *file, void *private_data,
 	struct sharpzdc_info  *info = private_data;
 
 	pr_debug("%s\n", __func__);
-	return (videobuf_reqbufs(&info->vb_vidq, p));
+	return videobuf_reqbufs(&info->vb_vidq, p);
 }
 
 static int sharpzdc_querybuf(struct file *file, void *private_data,
@@ -1006,7 +1007,7 @@ static int sharpzdc_querybuf(struct file *file, void *private_data,
 	struct sharpzdc_info  *info = private_data;
 
 	pr_debug("%s\n", __func__);
-	return (videobuf_querybuf(&info->vb_vidq, p));
+	return videobuf_querybuf(&info->vb_vidq, p);
 }
 
 static int sharpzdc_qbuf(struct file *file, void *private_data, struct v4l2_buffer *p)
@@ -1014,7 +1015,7 @@ static int sharpzdc_qbuf(struct file *file, void *private_data, struct v4l2_buff
 	struct sharpzdc_info *info = private_data;
 
 	pr_debug("%s\n", __func__);
-	return (videobuf_qbuf(&info->vb_vidq, p));
+	return videobuf_qbuf(&info->vb_vidq, p);
 }
 
 static int sharpzdc_dqbuf(struct file *file, void *private_data, struct v4l2_buffer *p)
@@ -1022,8 +1023,8 @@ static int sharpzdc_dqbuf(struct file *file, void *private_data, struct v4l2_buf
 	struct sharpzdc_info  *info = private_data;
 
 	pr_debug("%s\n", __func__);
-	return (videobuf_dqbuf(&info->vb_vidq, p,
-				file->f_flags & O_NONBLOCK));
+	return videobuf_dqbuf(&info->vb_vidq, p,
+				file->f_flags & O_NONBLOCK);
 }
 
 #ifdef CONFIG_VIDEO_V4L1_COMPAT
@@ -1116,12 +1117,12 @@ static int sharpzdc_config_check(struct pcmcia_device *link,
 		link->conf.Vpp = dflt->vpp1.param[CISTPL_POWER_VNOM]/10000;
 
 	/* Do we need to allocate an interrupt? */
-	if (cfg->irq.IRQInfo1 || dflt->irq.IRQInfo1) {
+	if (cfg->irq.IRQInfo1 || dflt->irq.IRQInfo1)
 		link->conf.Attributes |= CONF_ENABLE_IRQ;
-	}
 
 	/* IO window settings */
-	link->io.NumPorts1 = link->io.NumPorts2 = 0;
+	link->io.NumPorts1 = 0;
+	link->io.NumPorts2 = 0;
 	if ((cfg->io.nwin > 0) || (dflt->io.nwin > 0)) {
 		cistpl_io_t *io = (cfg->io.nwin) ? &cfg->io : &dflt->io;
 		link->io.Attributes1 = IO_DATA_PATH_WIDTH_AUTO;
@@ -1200,11 +1201,11 @@ static int sharpzdc_config(struct pcmcia_device *link)
 	if (link->conf.Attributes & CONF_ENABLE_IRQ)
 		printk(", irq %d", link->irq.AssignedIRQ);
 	if (link->io.NumPorts1)
-		printk(", io 0x%04lx-0x%04lx", (long int)link->io.BasePort1,
-			   (long int)link->io.BasePort1+link->io.NumPorts1-1);
+		printk(", io 0x%04x-0x%04x", link->io.BasePort1,
+			   link->io.BasePort1+link->io.NumPorts1-1);
 	if (link->io.NumPorts2)
-		printk(" & 0x%04lx-0x%04lx", (long int)link->io.BasePort2,
-			   (long int)link->io.BasePort2+link->io.NumPorts2-1);
+		printk(" & 0x%04x-0x%04x", link->io.BasePort2,
+			   link->io.BasePort2+link->io.NumPorts2-1);
 	if (link->win)
 		printk(", mem 0x%06lx-0x%06lx", req.Base,
 			   req.Base+req.Size-1);
@@ -1322,7 +1323,6 @@ static void sharpzdc_remove(struct pcmcia_device *link)
 
 static struct pcmcia_device_id sharpzdc_ids[] = {
 	PCMCIA_DEVICE_CIS_PROD_ID12("SHARP", "CEAG06  ", 0xb3ad4c1c, 0xe1d1a7a9, "CE-AG06.dat"),
-//	PCMCIA_DEVICE_PROD_ID12("SHARP", "CEAG06  ", 0xb3ad4c1c, 0xe1d1a7a9),
 	PCMCIA_DEVICE_NULL,
 };
 
