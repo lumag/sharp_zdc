@@ -771,7 +771,7 @@ static void sharpzdc_vdev_release(struct video_device *vdev)
 
 	video_device_release(vdev);
 
-	kref_put(&info->ref, sharpzdc_info_release);
+	kref_put(&info->ref, sharpzdc_info_release); /* vdev->drvdata = info */
 }
 
 static ssize_t
@@ -813,7 +813,7 @@ static int sharpzdc_open(struct inode *inode, struct file *fp)
 
 	pr_debug("%s\n", __func__);
 
-	kref_get(&info->ref);
+	kref_get(&info->ref); /* as we store info in fp */
 	fp->private_data = info;
 
 	videobuf_queue_vmalloc_init(&info->vb_vidq, &sharpzdc_video_qops,
@@ -833,7 +833,7 @@ static int sharpzdc_release(struct inode *inode, struct file *fp)
 	videobuf_stop(&info->vb_vidq);
 	videobuf_mmap_free(&info->vb_vidq);
 
-	kref_put(&info->ref, sharpzdc_info_release);
+	kref_put(&info->ref, sharpzdc_info_release); /* pair to kref_get in sharpzdc_open */
 	return 0;
 }
 
@@ -1255,7 +1255,7 @@ static int __devinit sharpzdc_probe(struct pcmcia_device *link)
 		ret = -ENOMEM;
 		goto err_vdev;
 	}
-	kref_get(&info->ref);
+	kref_get(&info->ref); /* vdev->drvdata = info */
 	video_set_drvdata(info->vdev, info);
 
 	info->width = 320;
@@ -1301,7 +1301,7 @@ err_vdev:
 err_map:
 	pcmcia_disable_device(link);
 err_config:
-	kref_put(&info->ref, sharpzdc_info_release);
+	kref_put(&info->ref, sharpzdc_info_release); /* put initial reference */
 	return ret;
 }
 
@@ -1318,7 +1318,7 @@ static void sharpzdc_remove(struct pcmcia_device *link)
 
 	ioport_unmap(info->io);
 	pcmcia_disable_device(link);
-	kref_put(&info->ref, sharpzdc_info_release);
+	kref_put(&info->ref, sharpzdc_info_release); /* put initial reference */
 }
 
 static struct pcmcia_device_id sharpzdc_ids[] = {
