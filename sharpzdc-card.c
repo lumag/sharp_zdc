@@ -3,7 +3,6 @@
 #include <linux/module.h>
 #include <linux/kref.h>
 #include <linux/kthread.h>
-#include <linux/freezer.h>
 #include <linux/firmware.h>
 
 #include <pcmcia/cs_types.h>
@@ -557,37 +556,6 @@ static int param_modeset(struct sharpzdc_info *zdcinfo, const char *data)
 }
 #endif
 
-static int sharpzdc_kthread(void *data)
-{
-	struct sharpzdc_info *info = data;
-	DECLARE_WAITQUEUE(wait, current);
-
-	pr_debug("%s\n", __func__);
-//	set_user_nice(current, -20);
-
-	set_freezable();
-	add_wait_queue(&info->wq, &wait);
-
-	for (;;) {
-		if (kthread_should_stop())
-			break;
-
-		try_to_freeze();
-		schedule_timeout_interruptible(1000 * 30 / 1001);
-//		wait_event_freezable(info->wq, !list_empty(&info->queued) || kthread_should_stop());
-
-		if (kthread_should_stop())
-			break;
-		sharpzdc_thread_tick(info);
-	}
-
-
-	remove_wait_queue(&info->wq, &wait);
-	pr_debug("%s exiting\n", __func__);
-
-	return 0;
-}
-
 void sharpzdc_info_release(struct kref *ref)
 {
 	struct sharpzdc_info *info = to_zdcinfo(ref);
@@ -742,7 +710,6 @@ static int __devinit sharpzdc_probe(struct pcmcia_device *link)
 	kref_init(&info->ref);
 	spin_lock_init(&info->lock);
 	INIT_LIST_HEAD(&info->queued);
-	init_waitqueue_head(&info->wq);
 
 	info->p_dev = link;
 	link->priv = info;

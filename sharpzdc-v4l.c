@@ -2,6 +2,8 @@
 #include <linux/kernel.h>
 #include <linux/version.h>
 #include <linux/interrupt.h>
+#include <linux/kthread.h>
+#include <linux/freezer.h>
 
 #include <media/v4l2-dev.h>
 #include <media/v4l2-ioctl.h>
@@ -13,7 +15,7 @@ static unsigned int vid_limit = 16;	/* Video memory limit, in Mb */
 module_param(vid_limit, int, 0644);
 MODULE_PARM_DESC(vid_limit, "capture memory limit in megabytes");
 
-void sharpzdc_thread_tick(struct sharpzdc_info *info)
+static void sharpzdc_thread_tick(struct sharpzdc_info *info)
 {
 	struct videobuf_buffer *vb;
 	void *vbuf;
@@ -50,6 +52,37 @@ unlock:
 	spin_unlock_irqrestore(&info->lock, flags);
 	return;
 }
+
+int sharpzdc_kthread(void *data)
+{
+	struct sharpzdc_info *info = data;
+	DECLARE_WAITQUEUE(wait, current);
+
+	pr_debug("%s\n", __func__);
+//	set_user_nice(current, -20);
+
+	set_freezable();
+	add_wait_queue(&info->vb_vidq.wait, &wait);
+
+	for (;;) {
+		if (kthread_should_stop())
+			break;
+
+		try_to_freeze();
+		schedule_timeout_interruptible(1000 * 30 / 1001);
+//		wait_event_freezable(info->wq, !list_empty(&info->queued) || kthread_should_stop());
+
+		if (kthread_should_stop())
+			break;
+		sharpzdc_thread_tick(info);
+	}
+
+	remove_wait_queue(&info->vb_vidq.wait, &wait);
+	pr_debug("%s exiting\n", __func__);
+
+	return 0;
+}
+
 
 static void sharpzdc_buf_release(struct videobuf_queue *q,
 		struct videobuf_buffer *vb)
@@ -125,7 +158,6 @@ static void sharpzdc_buf_queue(struct videobuf_queue *q,
 	vb->state = VIDEOBUF_QUEUED;
 
 	list_add_tail(&vb->queue, &info->queued);
-	wake_up(&info->wq);
 }
 
 static struct videobuf_queue_ops sharpzdc_video_qops = {

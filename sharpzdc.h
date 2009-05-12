@@ -13,7 +13,6 @@ struct sharpzdc_info {
 	spinlock_t		lock; /* guards video buffs */
 
 	struct task_struct	*thread;
-	wait_queue_head_t	wq;
 
 	void __iomem		*io;
 	int	readmode;
@@ -28,7 +27,8 @@ void sharpzdc_info_release(struct kref *ref);
 int sharpzdc_vdev_init(struct device *parent, struct sharpzdc_info *info);
 void sharpzdc_vdev_exit(struct sharpzdc_info *info);
 int sharpzdc_get(struct sharpzdc_info *zdcinfo, char *buf);
-void sharpzdc_thread_tick(struct sharpzdc_info *info);
+
+int sharpzdc_kthread(void *data);
 
 #endif
 
