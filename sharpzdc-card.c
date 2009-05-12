@@ -8,7 +8,6 @@
 
 #include <pcmcia/cs_types.h>
 #include <pcmcia/cistpl.h>
-#include <pcmcia/cisreg.h>
 #include <pcmcia/ds.h>
 
 #include "sharpzdc.h"
@@ -611,12 +610,6 @@ static int __devinit sharpzdc_config_check(struct pcmcia_device *link,
 
 	if (cfg->index == 0)
 		return -ENODEV;
-
-	/* Does this card need audio output? */
-	if (cfg->flags & CISTPL_CFTABLE_AUDIO) {
-		link->conf.Attributes |= CONF_ENABLE_SPKR;
-		link->conf.Status = CCSR_AUDIO_ENA;
-	}
 
 	/* Use power settings for Vcc and Vpp if present */
 	/*  Note that the CIS values need to be rescaled */
