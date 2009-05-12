@@ -806,7 +806,7 @@ static int sharpzdc_mmap(struct file *file, struct vm_area_struct *vma)
 }
 
 
-static int sharpzdc_open(struct inode *inode, struct file *fp)
+static int sharpzdc_open(struct file *fp)
 {
 	struct video_device *vdev = video_devdata(fp);
 	struct sharpzdc_info *info = video_get_drvdata(vdev);
@@ -824,7 +824,7 @@ static int sharpzdc_open(struct inode *inode, struct file *fp)
 	return 0;
 }
 
-static int sharpzdc_release(struct inode *inode, struct file *fp)
+static int sharpzdc_release(struct file *fp)
 {
 	struct sharpzdc_info *info = fp->private_data;
 
@@ -837,7 +837,7 @@ static int sharpzdc_release(struct inode *inode, struct file *fp)
 	return 0;
 }
 
-static const struct file_operations sharpzdc_fops = {
+static const struct v4l2_file_operations sharpzdc_fops = {
 	.owner		= THIS_MODULE,
 	.open		= sharpzdc_open,
 	.release	= sharpzdc_release,
@@ -848,7 +848,6 @@ static const struct file_operations sharpzdc_fops = {
 #ifdef CONFIG_COMPAT
 	.compat_ioctl	= v4l_compat_ioctl32,
 #endif
-	.llseek		= no_llseek,
 };
 
 static int sharpzdc_querycap(struct file *file, void *private_data,
@@ -1184,8 +1183,7 @@ static int __devinit sharpzdc_config(struct pcmcia_device *link)
 
 	last_ret = pcmcia_loop_config(link, sharpzdc_config_check, &req);
 	if (last_ret) {
-		last_fn = GetNextTuple;
-		goto cs_failed;
+		goto failed;
 	}
 
 	if (link->conf.Attributes & CONF_ENABLE_IRQ)
@@ -1214,6 +1212,7 @@ static int __devinit sharpzdc_config(struct pcmcia_device *link)
 	return 0;
 cs_failed:
 	cs_error(link, last_fn, last_ret);
+failed:
 	pcmcia_disable_device(link);
 	return -ENODEV;
 }
