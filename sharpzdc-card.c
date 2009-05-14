@@ -710,6 +710,7 @@ static int __devinit sharpzdc_probe(struct pcmcia_device *link)
 	kref_init(&info->ref);
 	spin_lock_init(&info->lock);
 	INIT_LIST_HEAD(&info->queued);
+	init_completion(&info->finish);
 
 	info->p_dev = link;
 	link->priv = info;
@@ -750,6 +751,7 @@ static int __devinit sharpzdc_probe(struct pcmcia_device *link)
 	return 0;
 err_vdev:
 	kthread_stop(info->thread);
+	wait_for_completion(&info->finish);
 err_thread:
 	sharpzdc_stop(info);
 err_start:
@@ -769,6 +771,7 @@ static void sharpzdc_remove(struct pcmcia_device *link)
 	sharpzdc_vdev_exit(info);
 
 	kthread_stop(info->thread);
+	wait_for_completion(&info->finish);
 
 	sharpzdc_stop(info);
 

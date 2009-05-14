@@ -2,6 +2,7 @@
 #define SHARPZDC_H
 
 #include <media/videobuf-vmalloc.h>
+#include <linux/completion.h>
 
 struct sharpzdc_info {
 	struct kref		ref;
@@ -13,6 +14,7 @@ struct sharpzdc_info {
 	spinlock_t		lock; /* guards video buffs */
 
 	struct task_struct	*thread;
+	struct completion	finish;
 
 	void __iomem		*io;
 	int	readmode;

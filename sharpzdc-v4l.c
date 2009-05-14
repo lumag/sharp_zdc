@@ -56,28 +56,26 @@ unlock:
 int sharpzdc_kthread(void *data)
 {
 	struct sharpzdc_info *info = data;
-	DECLARE_WAITQUEUE(wait, current);
 
 	pr_debug("%s\n", __func__);
 //	set_user_nice(current, -20);
 
 	set_freezable();
-	add_wait_queue(&info->vb_vidq.wait, &wait);
 
 	for (;;) {
 		if (kthread_should_stop())
 			break;
 
 		try_to_freeze();
-		schedule_timeout_interruptible(1000 * 30 / 1001);
-//		wait_event_freezable(info->wq, !list_empty(&info->queued) || kthread_should_stop());
+		schedule_timeout_interruptible(HZ / (1000 * 30 / 1001));
+//		wait_event_freezable(&info->vb_vidq.wait, !list_empty(&info->queued) || kthread_should_stop());
 
 		if (kthread_should_stop())
 			break;
 		sharpzdc_thread_tick(info);
 	}
 
-	remove_wait_queue(&info->vb_vidq.wait, &wait);
+	complete(&info->finish);
 	pr_debug("%s exiting\n", __func__);
 
 	return 0;
