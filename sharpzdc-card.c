@@ -782,7 +782,7 @@ static void sharpzdc_remove(struct pcmcia_device *link)
 }
 
 static struct pcmcia_device_id sharpzdc_ids[] = {
-	PCMCIA_DEVICE_CIS_PROD_ID12("SHARP", "CEAG06  ", 0xb3ad4c1c, 0xe1d1a7a9, "CE-AG06.dat"),
+	PCMCIA_DEVICE_CIS_PROD_ID12("SHARP", "CEAG06  ", 0xb3ad4c1c, 0xe1d1a7a9, "cis/CE-AG06.cis"),
 	PCMCIA_DEVICE_NULL,
 };
 
