@@ -565,9 +565,6 @@ void sharpzdc_info_release(struct kref *ref)
 	kfree(info);
 }
 
-#define CS_CHECK(fn, ret) \
-do { last_fn = (fn); if ((last_ret = (ret)) != 0) goto cs_failed; } while (0)
-
 static int __devinit sharpzdc_config_check(struct pcmcia_device *link,
 		cistpl_cftable_entry_t *cfg,
 		cistpl_cftable_entry_t *dflt,
@@ -648,7 +645,7 @@ static int __devinit sharpzdc_config(struct pcmcia_device *link)
 {
 	tuple_t tuple;
 	u_short buf[64];
-	int last_fn, last_ret;
+	int ret;
 	win_req_t req;
 
 	pr_debug("%s\n", __func__);
@@ -660,15 +657,20 @@ static int __devinit sharpzdc_config(struct pcmcia_device *link)
 	tuple.Attributes = 0;
 	tuple.DesiredTuple = CISTPL_CFTABLE_ENTRY;
 
-	last_ret = pcmcia_loop_config(link, sharpzdc_config_check, &req);
-	if (last_ret) {
+	ret = pcmcia_loop_config(link, sharpzdc_config_check, &req);
+	if (ret) {
 		goto failed;
 	}
 
-	if (link->conf.Attributes & CONF_ENABLE_IRQ)
-		CS_CHECK(RequestIRQ, pcmcia_request_irq(link, &link->irq));
+	if (link->conf.Attributes & CONF_ENABLE_IRQ) {
+		ret = pcmcia_request_irq(link, &link->irq);
+		if (ret)
+			goto failed;
+	}
 
-	CS_CHECK(RequestConfiguration, pcmcia_request_configuration(link, &link->conf));
+	ret = pcmcia_request_configuration(link, &link->conf);
+	if (ret)
+		goto failed;
 
 	/* Finally, report what we've done */
 	printk(KERN_INFO "%s: index 0x%02x: ",
@@ -689,8 +691,7 @@ static int __devinit sharpzdc_config(struct pcmcia_device *link)
 	printk("\n");
 
 	return 0;
-cs_failed:
-	cs_error(link, last_fn, last_ret);
+
 failed:
 	pcmcia_disable_device(link);
 	return -ENODEV;
