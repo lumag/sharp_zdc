@@ -672,7 +672,7 @@ static int __devinit sharpzdc_config(struct pcmcia_device *link)
 
 	/* Finally, report what we've done */
 	printk(KERN_INFO "%s: index 0x%02x: ",
-		   link->dev.bus_id, link->conf.ConfigIndex);
+		   dev_name(&link->dev), link->conf.ConfigIndex);
 	if (link->conf.Vpp)
 		printk(", Vpp %d.%d", link->conf.Vpp/10, link->conf.Vpp%10);
 	if (link->conf.Attributes & CONF_ENABLE_IRQ)
