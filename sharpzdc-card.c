@@ -4,6 +4,8 @@
 #include <linux/kref.h>
 #include <linux/kthread.h>
 #include <linux/firmware.h>
+#include <linux/io.h>
+#include <linux/delay.h>
 
 #include <pcmcia/cs_types.h>
 #include <pcmcia/cistpl.h>
