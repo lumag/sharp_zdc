@@ -573,8 +573,6 @@ static int __devinit sharpzdc_config_check(struct pcmcia_device *link,
 		unsigned int vcc,
 		void *priv_data)
 {
-	win_req_t *req = priv_data;
-
 	if (cfg->index == 0)
 		return -ENODEV;
 
@@ -620,25 +618,6 @@ static int __devinit sharpzdc_config_check(struct pcmcia_device *link,
 	if (pcmcia_request_io(link, &link->io) != 0)
 		return -ENODEV;
 
-	if ((cfg->mem.nwin > 0) || (dflt->mem.nwin > 0)) {
-		cistpl_mem_t *mem = (cfg->mem.nwin) ? &cfg->mem : &dflt->mem;
-		memreq_t map;
-		req->Attributes = WIN_DATA_WIDTH_16|WIN_MEMORY_TYPE_CM;
-		req->Attributes |= WIN_ENABLE;
-		req->Base = mem->win[0].host_addr;
-		req->Size = mem->win[0].len;
-		if (req->Size < 0x1000)
-			req->Size = 0x1000;
-		req->AccessSpeed = 0;
-		if (pcmcia_request_window(link, req, &link->win) != 0)
-			return -ENODEV;
-
-		map.Page = 0;
-		map.CardOffset = mem->win[0].card_addr;
-		if (pcmcia_map_mem_page(link, link->win, &map) != 0)
-			return -ENODEV;
-	}
-
 	return 0;
 }
 
@@ -647,7 +626,6 @@ static int __devinit sharpzdc_config(struct pcmcia_device *link)
 	tuple_t tuple;
 	u_short buf[64];
 	int ret;
-	win_req_t req;
 
 	pr_debug("%s\n", __func__);
 
@@ -658,7 +636,7 @@ static int __devinit sharpzdc_config(struct pcmcia_device *link)
 	tuple.Attributes = 0;
 	tuple.DesiredTuple = CISTPL_CFTABLE_ENTRY;
 
-	ret = pcmcia_loop_config(link, sharpzdc_config_check, &req);
+	ret = pcmcia_loop_config(link, sharpzdc_config_check, NULL);
 	if (ret) {
 		goto failed;
 	}
@@ -686,9 +664,6 @@ static int __devinit sharpzdc_config(struct pcmcia_device *link)
 	if (link->io.NumPorts2)
 		printk(" & 0x%04x-0x%04x", link->io.BasePort2,
 			   link->io.BasePort2+link->io.NumPorts2-1);
-	if (link->win)
-		printk(", mem 0x%06lx-0x%06lx", req.Base,
-			   req.Base+req.Size-1);
 	printk("\n");
 
 	return 0;
