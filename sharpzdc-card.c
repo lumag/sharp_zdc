@@ -593,9 +593,8 @@ static int __devinit sharpzdc_config_check(struct pcmcia_device *link,
 	else if (dflt->vpp1.present & (1<<CISTPL_POWER_VNOM))
 		link->conf.Vpp = dflt->vpp1.param[CISTPL_POWER_VNOM]/10000;
 
-	/* Do we need to allocate an interrupt? */
-	if (cfg->irq.IRQInfo1 || dflt->irq.IRQInfo1)
-		link->conf.Attributes |= CONF_ENABLE_IRQ;
+	/* This card unfortunately doesn't have IRQ
+	 * link->conf.Attributes |= CONF_ENABLE_IRQ; */
 
 	/* IO window settings */
 	link->io.NumPorts1 = 0;
@@ -631,12 +630,12 @@ static int __devinit sharpzdc_config_check(struct pcmcia_device *link,
 		if (req->Size < 0x1000)
 			req->Size = 0x1000;
 		req->AccessSpeed = 0;
-		if (pcmcia_request_window(&link, req, &link->win) != 0)
+		if (pcmcia_request_window(link, req, &link->win) != 0)
 			return -ENODEV;
 
 		map.Page = 0;
 		map.CardOffset = mem->win[0].card_addr;
-		if (pcmcia_map_mem_page(link->win, &map) != 0)
+		if (pcmcia_map_mem_page(link, link->win, &map) != 0)
 			return -ENODEV;
 	}
 
@@ -719,7 +718,6 @@ static int __devinit sharpzdc_probe(struct pcmcia_device *link)
 	link->priv = info;
 
 	link->irq.Attributes = IRQ_TYPE_DYNAMIC_SHARING;
-	link->irq.IRQInfo1 = IRQ_LEVEL_ID;
 	link->conf.Attributes = 0;
 	link->conf.IntType = INT_MEMORY_AND_IO;
 
