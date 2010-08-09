@@ -591,9 +591,6 @@ static int __devinit sharpzdc_config_check(struct pcmcia_device *link,
 	else if (dflt->vpp1.present & (1<<CISTPL_POWER_VNOM))
 		link->conf.Vpp = dflt->vpp1.param[CISTPL_POWER_VNOM]/10000;
 
-	/* This card unfortunately doesn't have IRQ
-	 * link->conf.Attributes |= CONF_ENABLE_IRQ; */
-
 	/* IO window settings */
 	link->io.NumPorts1 = 0;
 	link->io.NumPorts2 = 0;
@@ -641,12 +638,6 @@ static int __devinit sharpzdc_config(struct pcmcia_device *link)
 		goto failed;
 	}
 
-	if (link->conf.Attributes & CONF_ENABLE_IRQ) {
-		ret = pcmcia_request_irq(link, &link->irq);
-		if (ret)
-			goto failed;
-	}
-
 	ret = pcmcia_request_configuration(link, &link->conf);
 	if (ret)
 		goto failed;
@@ -656,8 +647,6 @@ static int __devinit sharpzdc_config(struct pcmcia_device *link)
 		   dev_name(&link->dev), link->conf.ConfigIndex);
 	if (link->conf.Vpp)
 		printk(", Vpp %d.%d", link->conf.Vpp/10, link->conf.Vpp%10);
-	if (link->conf.Attributes & CONF_ENABLE_IRQ)
-		printk(", irq %d", link->irq.AssignedIRQ);
 	if (link->io.NumPorts1)
 		printk(", io 0x%04x-0x%04x", link->io.BasePort1,
 			   link->io.BasePort1+link->io.NumPorts1-1);
@@ -692,7 +681,6 @@ static int __devinit sharpzdc_probe(struct pcmcia_device *link)
 	info->p_dev = link;
 	link->priv = info;
 
-	link->irq.Attributes = IRQ_TYPE_DYNAMIC_SHARING;
 	link->conf.Attributes = 0;
 	link->conf.IntType = INT_MEMORY_AND_IO;
 
